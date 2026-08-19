@@ -231,6 +231,47 @@ def gather_board_occupancy_data(public_state: PublicState) -> BoardOccupancyData
     )
 
 
+def _calculate_production(buildings: List[BuildingInfo], multiplier: int = 1) -> tuple[int, Dict[str, int]]:
+    """Calculate production statistics from a list of buildings.
+
+    Args:
+        buildings: List of BuildingInfo objects
+        multiplier: Production multiplier (1 for settlements, 2 for cities)
+
+    Returns:
+        tuple: (total_pips, resource_pips_dict)
+    """
+    total_pips = 0
+    resource_pips = {"WOOD": 0, "BRICK": 0, "SHEEP": 0, "WHEAT": 0, "ORE": 0}
+
+    for building in buildings:
+        total_pips += building.total_pips * multiplier
+        for hex_info in building.adjacent_hexes:
+            if hex_info.resource in resource_pips:
+                resource_pips[hex_info.resource] += hex_info.pips * multiplier
+
+    return total_pips, resource_pips
+
+
+def _format_building_string(building: BuildingInfo) -> str:
+    """Format a BuildingInfo object into a display string.
+
+    Args:
+        building: The BuildingInfo object to format
+
+    Returns:
+        str: Formatted string representation of the building
+    """
+    hex_info_list = []
+    for hex in building.adjacent_hexes:
+        if hex.resource == "DESERT":
+            hex_info_list.append(f"(Tile {hex.tile_id}: DESERT)")
+        else:
+            hex_info_list.append(f"(Tile {hex.tile_id}: {hex.roll if hex.roll else 'None'} {hex.resource} ({hex.pips} pips))")
+    hex_info = ", ".join(hex_info_list)
+    return f"Node {building.node_id}: {hex_info}, Total: {building.total_pips} pips"
+
+
 def format_board_occupancy_data(occupancy_data: BoardOccupancyData) -> str:
     """Format board occupancy data into a readable string.
 
@@ -252,22 +293,14 @@ def format_board_occupancy_data(occupancy_data: BoardOccupancyData) -> str:
         roads = player_data.roads
 
         # Calculate production statistics
-        total_pips = 0
+        settlement_pips, settlement_resource_pips = _calculate_production(settlements, multiplier=1)
+        city_pips, city_resource_pips = _calculate_production(cities, multiplier=2)
+
+        # Combine production from settlements and cities
+        total_pips = settlement_pips + city_pips
         resource_pips = {"WOOD": 0, "BRICK": 0, "SHEEP": 0, "WHEAT": 0, "ORE": 0}
-
-        # Add settlement production (1x)
-        for building in settlements:
-            total_pips += building.total_pips
-            for hex_info in building.adjacent_hexes:
-                if hex_info.resource in resource_pips:
-                    resource_pips[hex_info.resource] += hex_info.pips
-
-        # Add city production (2x)
-        for building in cities:
-            total_pips += building.total_pips * 2  # Cities produce 2x
-            for hex_info in building.adjacent_hexes:
-                if hex_info.resource in resource_pips:
-                    resource_pips[hex_info.resource] += hex_info.pips * 2  # Cities produce 2x
+        for resource in resource_pips:
+            resource_pips[resource] = settlement_resource_pips[resource] + city_resource_pips[resource]
 
         # Format production string
         resource_strings = [f"{res}: {pips}" for res, pips in resource_pips.items() if pips > 0]
@@ -282,28 +315,9 @@ def format_board_occupancy_data(occupancy_data: BoardOccupancyData) -> str:
         ports = sorted(list(set(ports)))
         port_str = f", ".join(ports) if ports else "None"
 
-        # Convert BuildingInfo objects to strings for display (without port info)
-        settlement_strings = []
-        for building in settlements:
-            hex_info_list = []
-            for hex in building.adjacent_hexes:
-                if hex.resource == "DESERT":
-                    hex_info_list.append(f"(Tile {hex.tile_id}: DESERT)")
-                else:
-                    hex_info_list.append(f"(Tile {hex.tile_id}: {hex.roll if hex.roll else 'None'} {hex.resource} ({hex.pips} pips))")
-            hex_info = ", ".join(hex_info_list)
-            settlement_strings.append(f"Node {building.node_id}: {hex_info}, Total: {building.total_pips} pips")
-
-        city_strings = []
-        for building in cities:
-            hex_info_list = []
-            for hex in building.adjacent_hexes:
-                if hex.resource == "DESERT":
-                    hex_info_list.append(f"(Tile {hex.tile_id}: DESERT)")
-                else:
-                    hex_info_list.append(f"(Tile {hex.tile_id}: {hex.roll if hex.roll else 'None'} {hex.resource} ({hex.pips} pips))")
-            hex_info = ", ".join(hex_info_list)
-            city_strings.append(f"Node {building.node_id}: {hex_info}, Total: {building.total_pips} pips")
+        # Convert BuildingInfo objects to strings for display
+        settlement_strings = [_format_building_string(building) for building in settlements]
+        city_strings = [_format_building_string(building) for building in cities]
 
         # Convert road tuples to strings
         road_strings = [f"({n1}, {n2})" for n1, n2 in roads]
