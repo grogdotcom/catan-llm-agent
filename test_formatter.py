@@ -13,7 +13,6 @@ from game_formatter import (
     summarize_catan_actions,
     format_decision_prompt,
     gather_board_occupancy_data,
-    format_board_occupancy_data,
     PlayerBoardData,
     BoardOccupancyData,
     AdjacentHexInfo,

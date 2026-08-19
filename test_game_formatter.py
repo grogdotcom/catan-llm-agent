@@ -5,6 +5,7 @@ Unit tests for the game formatter module
 import pytest
 import sys
 import os
+import random
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'catanatron-forked', 'catanatron'))
 
@@ -20,6 +21,7 @@ from game_formatter import (
     BuildingInfo,
     AdjacentHexInfo,
     format_board_occupancy_data,
+    format_robber_info,
     get_full_board_map,
     get_pip_count,
 )
@@ -232,7 +234,7 @@ def test_format_board_occupancy_data_node_ids():
     game = create_test_game_with_buildings()
     occupancy_data = gather_board_occupancy_data(build_public_state(game))
     
-    result = format_board_occupancy_data(occupancy_data, build_public_state(game), game)
+    result = format_board_occupancy_data(occupancy_data, game)
     
     # Should contain node IDs in building information
     assert "Node 0:" in result  # RED settlement
@@ -474,7 +476,7 @@ def test_format_board_occupancy_data_returns_string():
     game = create_test_game_with_buildings()
     occupancy_data = gather_board_occupancy_data(build_public_state(game))
     
-    result = format_board_occupancy_data(occupancy_data, build_public_state(game), game)
+    result = format_board_occupancy_data(occupancy_data, game)
     
     assert isinstance(result, str)
     assert len(result) > 0
@@ -485,7 +487,7 @@ def test_format_board_occupancy_data_contains_header():
     game = create_test_game_with_buildings()
     occupancy_data = gather_board_occupancy_data(build_public_state(game))
     
-    result = format_board_occupancy_data(occupancy_data, build_public_state(game), game)
+    result = format_board_occupancy_data(occupancy_data, game)
     
     assert "[CURRENT BOARD OCCUPANCY]" in result
 
@@ -495,7 +497,7 @@ def test_format_board_occupancy_data_contains_player_colors():
     game = create_test_game_with_buildings()
     occupancy_data = gather_board_occupancy_data(build_public_state(game))
     
-    result = format_board_occupancy_data(occupancy_data, build_public_state(game), game)
+    result = format_board_occupancy_data(occupancy_data, game)
     
     assert "- RED: Total:" in result
     assert "- BLUE: Total:" in result
@@ -508,7 +510,7 @@ def test_format_board_occupancy_data_contains_building_sections():
     game = create_test_game_with_buildings()
     occupancy_data = gather_board_occupancy_data(build_public_state(game))
     
-    result = format_board_occupancy_data(occupancy_data, build_public_state(game), game)
+    result = format_board_occupancy_data(occupancy_data, game)
     
     assert "Ports:" in result
     assert "Settlements:" in result
@@ -521,7 +523,7 @@ def test_format_board_occupancy_data_empty_buildings():
     game = create_test_game_empty()
     occupancy_data = gather_board_occupancy_data(build_public_state(game))
     
-    result = format_board_occupancy_data(occupancy_data, build_public_state(game), game)
+    result = format_board_occupancy_data(occupancy_data, game)
     
     # Should show "None" for empty building lists
     assert "Settlements: [None]" in result
@@ -538,7 +540,7 @@ def test_format_board_occupancy_data_with_buildings():
     game = create_test_game_with_buildings()
     occupancy_data = gather_board_occupancy_data(build_public_state(game))
     
-    result = format_board_occupancy_data(occupancy_data, build_public_state(game), game)
+    result = format_board_occupancy_data(occupancy_data, game)
     
     # Should contain building information (not "None")
     # Check that at least one player has actual buildings
@@ -552,7 +554,7 @@ def test_format_board_occupancy_data_robber_coordinate():
     game = create_test_game_with_robber()
     occupancy_data = gather_board_occupancy_data(build_public_state(game))
     
-    result = format_board_occupancy_data(occupancy_data, build_public_state(game), game)
+    result = format_board_occupancy_data(occupancy_data, game)
     
     # Should contain robber information
     assert "ROBBER: Hex" in result
@@ -563,7 +565,7 @@ def test_format_board_occupancy_data_settlement_format():
     game = create_test_game_with_buildings()
     occupancy_data = gather_board_occupancy_data(build_public_state(game))
     
-    result = format_board_occupancy_data(occupancy_data, build_public_state(game), game)
+    result = format_board_occupancy_data(occupancy_data, game)
     
     # Should contain pip information
     assert "pips" in result
@@ -576,7 +578,7 @@ def test_format_board_occupancy_data_road_format():
     game = create_test_game_with_buildings()
     occupancy_data = gather_board_occupancy_data(build_public_state(game))
     
-    result = format_board_occupancy_data(occupancy_data, build_public_state(game), game)
+    result = format_board_occupancy_data(occupancy_data, game)
     
     # Should contain road coordinate tuples
     assert "(0, 5)" in result  # RED's road
@@ -588,7 +590,7 @@ def test_format_board_occupancy_data_port_format():
     game = create_test_game_with_ports()
     occupancy_data = gather_board_occupancy_data(build_public_state(game))
     
-    result = format_board_occupancy_data(occupancy_data, build_public_state(game), game)
+    result = format_board_occupancy_data(occupancy_data, game)
     
     # Should contain port information in separate section
     assert "Ports:" in result
@@ -606,7 +608,7 @@ def test_format_board_occupancy_data_production_calculation():
     game = create_test_game_with_buildings()
     occupancy_data = gather_board_occupancy_data(build_public_state(game))
     
-    result = format_board_occupancy_data(occupancy_data, build_public_state(game), game)
+    result = format_board_occupancy_data(occupancy_data, game)
     
     # Should contain production information
     assert "Total:" in result
@@ -620,7 +622,7 @@ def test_format_board_occupancy_data_desert_formatting():
     game = create_test_game_deterministic()
     occupancy_data = gather_board_occupancy_data(build_public_state(game))
     
-    result = format_board_occupancy_data(occupancy_data, build_public_state(game), game)
+    result = format_board_occupancy_data(occupancy_data, game)
     
     # With adjacency info from public_state, we should have tile information in building descriptions
     # Just check that the basic structure is present
@@ -838,7 +840,7 @@ def test_format_board_occupancy_data_structure():
     game = create_test_game_with_buildings()
     occupancy_data = gather_board_occupancy_data(build_public_state(game))
     
-    result = format_board_occupancy_data(occupancy_data, build_public_state(game), game)
+    result = format_board_occupancy_data(occupancy_data, game)
     
     lines = result.split('\n')
     
@@ -865,7 +867,7 @@ def test_format_board_occupancy_data_player_order():
     game = create_test_game_with_buildings()
     occupancy_data = gather_board_occupancy_data(build_public_state(game))
     
-    result = format_board_occupancy_data(occupancy_data, build_public_state(game), game)
+    result = format_board_occupancy_data(occupancy_data, game)
     
     # Find player section order
     red_pos = result.find("- RED:")
@@ -982,7 +984,7 @@ def test_format_board_occupancy_data_complete_happy_path():
     game = create_test_game_deterministic()
     occupancy_data = gather_board_occupancy_data(build_public_state(game))
     
-    result = format_board_occupancy_data(occupancy_data, build_public_state(game), game)
+    result = format_board_occupancy_data(occupancy_data, game)
     
     # With public_state, we should have exact output with adjacency info
     # Check basic structure
@@ -1050,7 +1052,7 @@ def test_format_board_occupancy_data_exact_string_empty_game():
     
     game = Game(players)
     occupancy_data = gather_board_occupancy_data(build_public_state(game))
-    result = format_board_occupancy_data(occupancy_data, build_public_state(game), game)
+    result = format_board_occupancy_data(occupancy_data, game)
     
     expected = """[CURRENT BOARD OCCUPANCY]
 - BLUE: Total: 0 pips
@@ -1083,7 +1085,7 @@ def test_format_board_occupancy_data_exact_string_deterministic_game():
     """Test format_board_occupancy_data returns exact expected string for deterministic game"""
     game = create_test_game_deterministic()
     occupancy_data = gather_board_occupancy_data(build_public_state(game))
-    result = format_board_occupancy_data(occupancy_data, build_public_state(game), game)
+    result = format_board_occupancy_data(occupancy_data, game)
     
     expected = """[CURRENT BOARD OCCUPANCY]
 - BLUE: Total: 37 pips (WOOD: 15, SHEEP: 7, WHEAT: 15)
@@ -1111,6 +1113,191 @@ ROBBER: Hex (0, 0, 0) - Tile 0: 11 SHEEP (2 pips)
   * Blocking RED: 4 pips"""
     
     assert result == expected
+
+
+# ============================================================================
+# format_robber_info unit tests
+# ============================================================================
+
+def test_format_robber_info_returns_string():
+    """Test that format_robber_info returns a string"""
+    game = create_test_game_with_robber()
+    players = []
+    
+    result = format_robber_info((0, 0, 0), players, game)
+    
+    assert isinstance(result, str)
+    assert len(result) > 0
+
+
+def test_format_robber_info_contains_robber_header():
+    """Test that format_robber_info contains the robber header"""
+    game = create_test_game_with_robber()
+    players = []
+    
+    result = format_robber_info((0, 0, 0), players, game)
+    
+    assert "ROBBER: Hex" in result
+
+
+def test_format_robber_info_without_game():
+    """Test that format_robber_info works without game object"""
+    players = []
+    
+    result = format_robber_info((0, 0, 0), players, None)
+    
+    # Should still return robber coordinate without tile info
+    assert "ROBBER: Hex (0, 0, 0)" in result
+    # Should indicate that tile info couldn't be determined
+    assert "Could not determine tile from coordinate" in result
+
+
+def test_format_robber_info_with_empty_players():
+    """Test that format_robber_info works with empty player list"""
+    game = create_test_game_with_robber()
+    players = []
+    
+    result = format_robber_info((0, 0, 0), players, game)
+    
+    # Should show "Blocking: None" when no players
+    assert "Blocking: None" in result
+
+
+def test_format_robber_info_with_blocked_production():
+    """Test that format_robber_info calculates blocked production correctly"""
+    game = create_test_game_deterministic()
+    occupancy_data = gather_board_occupancy_data(build_public_state(game))
+    
+    # The robber is at (0, 0, 0) which is Tile 0: 11 SHEEP (2 pips)
+    result = format_robber_info((0, 0, 0), occupancy_data.players, game)
+    
+    # Should show blocked production for players with buildings adjacent to Tile 0
+    assert "Blocking" in result
+    # RED and BLUE have buildings adjacent to Tile 0
+    assert "RED" in result or "BLUE" in result
+
+
+def test_format_robber_info_blocked_production_calculation():
+    """Test that blocked production calculation is correct"""
+    game = create_test_game_deterministic()
+    occupancy_data = gather_board_occupancy_data(build_public_state(game))
+    
+    # The robber is at (0, 0, 0) which is Tile 0: 11 SHEEP (2 pips)
+    result = format_robber_info((0, 0, 0), occupancy_data.players, game)
+    
+    # RED has settlement at node 0 (adjacent to Tile 0) - 2 pips blocked
+    # RED has settlement at node 1 (adjacent to Tile 0) - 2 pips blocked
+    # Total for RED: 4 pips blocked
+    assert "Blocking RED: 4 pips" in result
+    
+    # BLUE has settlement at node 5 (adjacent to Tile 0) - 2 pips blocked
+    assert "Blocking BLUE: 2 pips" in result
+
+
+def test_format_robber_info_no_blocked_production():
+    """Test that format_robber_info shows no blocking when no buildings are adjacent"""
+    game = create_test_game_empty()
+    occupancy_data = gather_board_occupancy_data(build_public_state(game))
+    
+    # Set robber to a coordinate
+    result = format_robber_info((0, 0, 0), occupancy_data.players, game)
+    
+    # Should show "Blocking: None" when no buildings are adjacent
+    assert "Blocking: None" in result
+
+
+def test_format_robber_info_tile_information():
+    """Test that format_robber_info includes tile information when game is provided"""
+    game = create_test_game_deterministic()
+    players = []
+    
+    # The robber is at (0, 0, 0) which is Tile 0: 11 SHEEP (2 pips)
+    result = format_robber_info((0, 0, 0), players, game)
+    
+    # Should include tile information
+    assert "Tile" in result
+    assert "SHEEP" in result
+    assert "2 pips" in result
+
+
+def test_format_robber_info_desert_tile():
+    """Test that format_robber_info handles desert tiles correctly"""
+    game = create_test_game_empty()
+    players = []
+    
+    # Find the actual desert tile coordinate from the game
+    desert_coordinate = None
+    for coord, tile_data in game.state.board.map.tiles.items():
+        if tile_data.resource is None:  # Desert tile has None resource
+            desert_coordinate = coord
+            break
+    
+    if desert_coordinate is not None:
+        result = format_robber_info(desert_coordinate, players, game)
+        
+        # Should show DESERT for the tile
+        assert "DESERT" in result
+    else:
+        # Skip test if no desert found (shouldn't happen with standard map)
+        pytest.skip("No desert tile found in map")
+
+
+def test_format_robber_info_city_multiplier():
+    """Test that cities get 2x multiplier in blocked production calculation"""
+    # Create a custom game with a city adjacent to the robber
+    players = [
+        SimplePlayer(Color.RED),
+        SimplePlayer(Color.BLUE),
+        SimplePlayer(Color.ORANGE),
+        SimplePlayer(Color.WHITE),
+    ]
+    
+    game = Game(players)
+    board = game.state.board
+    
+    # Place a RED city at node 0 (adjacent to Tile 0)
+    board.buildings[0] = (Color.RED, CITY)
+    board.board_buildable_ids.discard(0)
+    
+    # Set robber to Tile 0 coordinate
+    board.robber_coordinate = (0, 0, 0)
+    
+    occupancy_data = gather_board_occupancy_data(build_public_state(game))
+    result = format_robber_info((0, 0, 0), occupancy_data.players, game)
+    
+    # The city should block 2x the pips (4 pips instead of 2)
+    assert "Blocking RED: 4 pips" in result
+
+
+def test_format_robber_info_multiple_players_blocked():
+    """Test that format_robber_info shows blocked production for multiple players"""
+    game = create_test_game_deterministic()
+    occupancy_data = gather_board_occupancy_data(build_public_state(game))
+    
+    # The robber is at (0, 0, 0) which blocks multiple players
+    result = format_robber_info((0, 0, 0), occupancy_data.players, game)
+    
+    # Should show blocked production for multiple players
+    # Count how many "Blocking" lines there are
+    blocking_count = result.count("Blocking")
+    assert blocking_count >= 2  # At least RED and BLUE should be blocked
+
+
+def test_format_robber_info_sorted_players():
+    """Test that blocked production is sorted by player color"""
+    game = create_test_game_deterministic()
+    occupancy_data = gather_board_occupancy_data(build_public_state(game))
+    
+    result = format_robber_info((0, 0, 0), occupancy_data.players, game)
+    
+    # Extract the blocking lines
+    lines = result.split('\n')
+    blocking_lines = [line for line in lines if "Blocking" in line and ":" in line]
+    
+    # Check that they are sorted alphabetically by color
+    if len(blocking_lines) > 1:
+        colors = [line.split("Blocking ")[1].split(":")[0] for line in blocking_lines]
+        assert colors == sorted(colors)
 
 
 if __name__ == "__main__":
