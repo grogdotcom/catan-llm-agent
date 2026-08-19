@@ -11,7 +11,15 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'
 
 from catanatron.game import Game
 from catanatron.models.player import Color, RandomPlayer, Player
-from catanatron.models.enums import SETTLEMENT, CITY
+from catanatron.models.enums import (
+    SETTLEMENT,
+    CITY,
+    Action,
+    ActionRecord,
+    ActionType,
+    RESOURCES,
+    DEVELOPMENT_CARDS,
+)
 from catanatron.models.board import Board
 from catanatron.models.map import CatanMap, BASE_MAP_TEMPLATE
 from game_formatter import (
@@ -27,10 +35,14 @@ from game_formatter import (
     get_pip_count,
     get_player_resources,
     get_player_dev_cards,
+    describe_action_record,
+    group_action_records_by_turn,
+    describe_turn,
+    format_public_history,
+    format_public_history_window,
 )
-from catanatron.models.perspective_player import _build_public_state
+from catanatron.models.perspective_player import _build_public_state, _sanitize_history
 from catanatron.state_functions import player_key
-from catanatron.models.enums import RESOURCES, DEVELOPMENT_CARDS
 
 
 def build_public_state(game):
@@ -1839,6 +1851,386 @@ def test_get_player_dev_cards_no_played_cards():
 - WHITE: 3 dev cards (hidden)"""
     
     assert result == expected
+
+
+# =============================================================================
+# public_history grouping and description
+# =============================================================================
+
+
+def _rec(color, action_type, value=None, result=None):
+    """Build an ActionRecord for unit tests."""
+    return ActionRecord(Action(color, action_type, value), result)
+
+
+def test_group_action_records_by_turn_empty():
+    assert group_action_records_by_turn(()) == []
+    assert group_action_records_by_turn([]) == []
+
+
+def test_group_action_records_by_turn_setup_only():
+    records = (
+        _rec(Color.RED, ActionType.BUILD_SETTLEMENT, 0),
+        _rec(Color.RED, ActionType.BUILD_ROAD, (0, 1)),
+        _rec(Color.BLUE, ActionType.BUILD_SETTLEMENT, 5),
+        _rec(Color.BLUE, ActionType.BUILD_ROAD, (5, 6)),
+    )
+    groups = group_action_records_by_turn(records)
+    assert len(groups) == 1
+    assert groups[0] == records
+
+
+def test_group_action_records_by_turn_setup_then_turns():
+    records = (
+        # setup
+        _rec(Color.RED, ActionType.BUILD_SETTLEMENT, 0),
+        _rec(Color.RED, ActionType.BUILD_ROAD, (0, 1)),
+        _rec(Color.BLUE, ActionType.BUILD_SETTLEMENT, 5),
+        _rec(Color.BLUE, ActionType.BUILD_ROAD, (5, 6)),
+        # turn 1
+        _rec(Color.RED, ActionType.ROLL, (3, 4), (3, 4)),
+        _rec(Color.RED, ActionType.END_TURN),
+        # turn 2 (open — no END_TURN yet)
+        _rec(Color.BLUE, ActionType.ROLL, (1, 2), (1, 2)),
+        _rec(Color.BLUE, ActionType.BUILD_ROAD, (5, 16)),
+    )
+    groups = group_action_records_by_turn(records)
+    assert len(groups) == 3
+    assert len(groups[0]) == 4  # setup
+    assert all(r.action.action_type in (ActionType.BUILD_SETTLEMENT, ActionType.BUILD_ROAD)
+               for r in groups[0])
+    assert groups[1][-1].action.action_type == ActionType.END_TURN
+    assert groups[1][0].action.color == Color.RED
+    assert groups[2][0].action.color == Color.BLUE
+    assert groups[2][-1].action.action_type != ActionType.END_TURN
+
+
+def test_group_action_records_keeps_discards_in_active_turn():
+    """Other players' discards belong to the roller’s 7-turn, not separate turns."""
+    records = (
+        _rec(Color.RED, ActionType.ROLL, (3, 4), (3, 4)),
+        _rec(Color.BLUE, ActionType.DISCARD_RESOURCE, "WOOD", "WOOD"),
+        _rec(Color.ORANGE, ActionType.DISCARD_RESOURCE, "BRICK", "BRICK"),
+        _rec(Color.RED, ActionType.MOVE_ROBBER, ((0, 0, 0), Color.BLUE), "SHEEP"),
+        _rec(Color.RED, ActionType.END_TURN),
+    )
+    groups = group_action_records_by_turn(records)
+    assert len(groups) == 1
+    assert len(groups[0]) == 5
+
+
+def test_describe_action_record_roll():
+    rec = _rec(Color.RED, ActionType.ROLL, (6, 1), (6, 1))
+    assert describe_action_record(rec) == "RED rolled 6+1 = 7"
+
+
+def test_describe_action_record_build_and_end():
+    assert describe_action_record(
+        _rec(Color.BLUE, ActionType.BUILD_SETTLEMENT, 12)
+    ) == "BLUE built settlement at node 12"
+    assert describe_action_record(
+        _rec(Color.BLUE, ActionType.BUILD_CITY, 12)
+    ) == "BLUE built city at node 12"
+    assert describe_action_record(
+        _rec(Color.BLUE, ActionType.BUILD_ROAD, (3, 1))
+    ) == "BLUE built road on edge (1, 3)"
+    assert describe_action_record(
+        _rec(Color.ORANGE, ActionType.END_TURN)
+    ) == "ORANGE ended turn"
+
+
+def test_describe_action_record_buy_dev_known_and_hidden():
+    assert describe_action_record(
+        _rec(Color.RED, ActionType.BUY_DEVELOPMENT_CARD, "KNIGHT", "KNIGHT")
+    ) == "RED bought development card: KNIGHT"
+    # Sanitized opponent purchase (value and result redacted)
+    assert describe_action_record(
+        _rec(Color.BLUE, ActionType.BUY_DEVELOPMENT_CARD, None, None)
+    ) == "BLUE bought a development card"
+
+
+def test_describe_action_record_move_robber_variants():
+    assert describe_action_record(
+        _rec(Color.RED, ActionType.MOVE_ROBBER, ((0, 0, 0), None), None)
+    ) == "RED moved robber to (0, 0, 0) (no steal)"
+    assert describe_action_record(
+        _rec(Color.RED, ActionType.MOVE_ROBBER, ((0, 0, 0), Color.BLUE), "WHEAT")
+    ) == "RED moved robber to (0, 0, 0) and stole WHEAT from BLUE"
+    # Spectator view — result redacted
+    assert describe_action_record(
+        _rec(Color.RED, ActionType.MOVE_ROBBER, ((0, 0, 0), Color.BLUE), None)
+    ) == "RED moved robber to (0, 0, 0) and stole from BLUE (card hidden)"
+
+
+def test_describe_action_record_discard_and_dev_plays():
+    assert describe_action_record(
+        _rec(Color.WHITE, ActionType.DISCARD_RESOURCE, "ORE", "ORE")
+    ) == "WHITE discarded ORE"
+    assert describe_action_record(
+        _rec(Color.RED, ActionType.PLAY_KNIGHT_CARD)
+    ) == "RED played Knight"
+    assert describe_action_record(
+        _rec(Color.RED, ActionType.PLAY_YEAR_OF_PLENTY, ("WOOD", "BRICK"))
+    ) == "RED played Year of Plenty: took WOOD, BRICK"
+    assert describe_action_record(
+        _rec(Color.RED, ActionType.PLAY_MONOPOLY, "SHEEP")
+    ) == "RED played Monopoly on SHEEP"
+    assert describe_action_record(
+        _rec(Color.RED, ActionType.PLAY_ROAD_BUILDING)
+    ) == "RED played Road Building"
+
+
+def test_describe_action_record_maritime_trade():
+    # 4:1 trade
+    rec = _rec(
+        Color.ORANGE,
+        ActionType.MARITIME_TRADE,
+        ("WHEAT", "WHEAT", "WHEAT", "WHEAT", "BRICK"),
+    )
+    assert describe_action_record(rec) == (
+        "ORANGE maritime trade: gives [WHEAT, WHEAT, WHEAT, WHEAT] to bank for BRICK"
+    )
+    # port 2:1 / 3:1 with Nones
+    rec = _rec(
+        Color.ORANGE,
+        ActionType.MARITIME_TRADE,
+        ("ORE", "ORE", None, None, "WOOD"),
+    )
+    assert describe_action_record(rec) == (
+        "ORANGE maritime trade: gives [ORE, ORE] to bank for WOOD"
+    )
+
+
+def test_describe_action_record_domestic_trade():
+    # RESOURCES order: WOOD BRICK SHEEP WHEAT ORE
+    offer = (1, 0, 0, 0, 0, 0, 1, 0, 0, 0)  # 1 WOOD for 1 BRICK
+    assert describe_action_record(
+        _rec(Color.RED, ActionType.OFFER_TRADE, offer)
+    ) == "RED offers [1 WOOD] for [1 BRICK]"
+    assert describe_action_record(
+        _rec(Color.BLUE, ActionType.ACCEPT_TRADE, offer)
+    ) == "BLUE accepted trade: offers [1 WOOD] for [1 BRICK]"
+    assert describe_action_record(
+        _rec(Color.ORANGE, ActionType.REJECT_TRADE, offer)
+    ) == "ORANGE rejected trade: offers [1 WOOD] for [1 BRICK]"
+    confirm = offer + (Color.BLUE,)
+    assert describe_action_record(
+        _rec(Color.RED, ActionType.CONFIRM_TRADE, confirm)
+    ) == "RED confirmed trade with BLUE: offers [1 WOOD] for [1 BRICK]"
+    assert describe_action_record(
+        _rec(Color.RED, ActionType.CANCEL_TRADE)
+    ) == "RED cancelled trade"
+
+
+def test_describe_turn_and_format_public_history():
+    records = (
+        _rec(Color.RED, ActionType.BUILD_SETTLEMENT, 0),
+        _rec(Color.RED, ActionType.BUILD_ROAD, (0, 1)),
+        _rec(Color.BLUE, ActionType.BUILD_SETTLEMENT, 5),
+        _rec(Color.BLUE, ActionType.BUILD_ROAD, (5, 6)),
+        _rec(Color.RED, ActionType.ROLL, (2, 3), (2, 3)),
+        _rec(Color.RED, ActionType.END_TURN),
+        _rec(Color.BLUE, ActionType.ROLL, (6, 1), (6, 1)),
+        _rec(Color.RED, ActionType.DISCARD_RESOURCE, "WOOD", "WOOD"),
+        _rec(Color.BLUE, ActionType.MOVE_ROBBER, ((0, 0, 0), Color.RED), None),
+        _rec(Color.BLUE, ActionType.END_TURN),
+    )
+    text = format_public_history(records)
+    expected = """[PUBLIC HISTORY]
+[SETUP]
+  - RED built settlement at node 0
+  - RED built road on edge (0, 1)
+  - BLUE built settlement at node 5
+  - BLUE built road on edge (5, 6)
+[TURN 1 (RED)]
+  - RED rolled 2+3 = 5
+  - RED ended turn
+[TURN 2 (BLUE)]
+  - BLUE rolled 6+1 = 7
+  - RED discarded WOOD
+  - BLUE moved robber to (0, 0, 0) and stole from RED (card hidden)
+  - BLUE ended turn"""
+    assert text == expected
+
+    turn_only = describe_turn(records[4:6], turn_label="TURN 1 (RED)")
+    assert turn_only == """[TURN 1 (RED)]
+  - RED rolled 2+3 = 5
+  - RED ended turn"""
+
+
+def test_format_public_history_empty():
+    assert format_public_history(()) == "[PUBLIC HISTORY]\n  (empty)"
+
+
+def test_group_and_format_real_sanitized_history():
+    """Integration: group a real game's sanitized public_history."""
+    players = [
+        SimplePlayer(Color.RED),
+        SimplePlayer(Color.BLUE),
+        SimplePlayer(Color.ORANGE),
+        SimplePlayer(Color.WHITE),
+    ]
+    game = Game(players, seed=42)
+    # Play enough to leave setup and finish a few turns
+    for _ in range(80):
+        if game.winning_color() is not None:
+            break
+        playable = game.playable_actions
+        if not playable:
+            break
+        game.execute(playable[0])
+
+    history = tuple(_sanitize_history(game, Color.RED))
+    groups = group_action_records_by_turn(history)
+    assert len(groups) >= 2
+    # First group is setup placements only
+    assert all(
+        r.action.action_type in (ActionType.BUILD_SETTLEMENT, ActionType.BUILD_ROAD)
+        for r in groups[0]
+    )
+    # Flattening groups recovers the full history
+    flattened = tuple(r for g in groups for r in g)
+    assert flattened == history
+
+    text = format_public_history(history)
+    assert text.startswith("[PUBLIC HISTORY]\n[SETUP]")
+    assert "rolled" in text
+    assert "ended turn" in text
+    # Every record yields exactly one bullet line
+    bullet_count = sum(1 for line in text.splitlines() if line.startswith("  - "))
+    assert bullet_count == len(history)
+
+
+def test_format_public_history_window_full_history():
+    """Test that window_size=None produces same output as format_public_history"""
+    records = (
+        _rec(Color.RED, ActionType.BUILD_SETTLEMENT, 0),
+        _rec(Color.RED, ActionType.BUILD_ROAD, (0, 1)),
+        _rec(Color.BLUE, ActionType.BUILD_SETTLEMENT, 5),
+        _rec(Color.BLUE, ActionType.BUILD_ROAD, (5, 6)),
+        _rec(Color.RED, ActionType.ROLL, (2, 3), (2, 3)),
+        _rec(Color.RED, ActionType.END_TURN),
+        _rec(Color.BLUE, ActionType.ROLL, (6, 1), (6, 1)),
+        _rec(Color.BLUE, ActionType.END_TURN),
+    )
+    
+    window_result = format_public_history_window(records, window_size=None)
+    original_result = format_public_history(records)
+    
+    assert window_result == original_result
+
+
+def test_format_public_history_window_last_two_turns():
+    """Test that window_size=2 shows only last 2 turns plus setup"""
+    records = (
+        _rec(Color.RED, ActionType.BUILD_SETTLEMENT, 0),
+        _rec(Color.RED, ActionType.BUILD_ROAD, (0, 1)),
+        _rec(Color.BLUE, ActionType.BUILD_SETTLEMENT, 5),
+        _rec(Color.BLUE, ActionType.BUILD_ROAD, (5, 6)),
+        _rec(Color.RED, ActionType.ROLL, (2, 3), (2, 3)),
+        _rec(Color.RED, ActionType.END_TURN),
+        _rec(Color.BLUE, ActionType.ROLL, (6, 1), (6, 1)),
+        _rec(Color.BLUE, ActionType.END_TURN),
+        _rec(Color.RED, ActionType.ROLL, (4, 5), (4, 5)),
+        _rec(Color.RED, ActionType.BUILD_ROAD, (1, 2)),
+        _rec(Color.RED, ActionType.END_TURN),
+    )
+    
+    result = format_public_history_window(records, window_size=2)
+    
+    # Should contain setup
+    assert "[SETUP]" in result
+    assert "RED built settlement at node 0" in result
+    
+    # Should contain window indicator
+    assert "[Showing last 2 of 3 turns]" in result
+    
+    # Should contain last 2 turns (TURN 2 and TURN 3)
+    assert "[TURN 1 (BLUE)]" in result
+    assert "[TURN 2 (RED)]" in result
+    
+    # Should NOT contain TURN 1 (RED) which was cut off
+    assert result.count("[TURN") == 2  # Only 2 turns should appear
+
+
+def test_format_public_history_window_setup_only():
+    """Test that window_size=0 shows only setup phase"""
+    records = (
+        _rec(Color.RED, ActionType.BUILD_SETTLEMENT, 0),
+        _rec(Color.RED, ActionType.BUILD_ROAD, (0, 1)),
+        _rec(Color.BLUE, ActionType.BUILD_SETTLEMENT, 5),
+        _rec(Color.BLUE, ActionType.BUILD_ROAD, (5, 6)),
+        _rec(Color.RED, ActionType.ROLL, (2, 3), (2, 3)),
+        _rec(Color.RED, ActionType.END_TURN),
+        _rec(Color.BLUE, ActionType.ROLL, (6, 1), (6, 1)),
+        _rec(Color.BLUE, ActionType.END_TURN),
+    )
+    
+    result = format_public_history_window(records, window_size=0)
+    
+    # Should contain setup
+    assert "[SETUP]" in result
+    assert "RED built settlement at node 0" in result
+    assert "BLUE built settlement at node 5" in result
+    
+    # Should contain setup-only indicator
+    assert "[Showing setup phase only]" in result
+    
+    # Should NOT contain any turns
+    assert "[TURN" not in result
+    assert "rolled" not in result
+
+
+def test_format_public_history_window_empty_history():
+    """Test that empty history works correctly"""
+    result = format_public_history_window((), window_size=2)
+    assert result == "[PUBLIC HISTORY]\n  (empty)"
+
+
+def test_format_public_history_window_single_turn():
+    """Test window with single turn"""
+    records = (
+        _rec(Color.RED, ActionType.BUILD_SETTLEMENT, 0),
+        _rec(Color.RED, ActionType.BUILD_ROAD, (0, 1)),
+        _rec(Color.BLUE, ActionType.BUILD_SETTLEMENT, 5),
+        _rec(Color.BLUE, ActionType.BUILD_ROAD, (5, 6)),
+        _rec(Color.RED, ActionType.ROLL, (2, 3), (2, 3)),
+        _rec(Color.RED, ActionType.END_TURN),
+    )
+    
+    result = format_public_history_window(records, window_size=1)
+    
+    # Should contain setup
+    assert "[SETUP]" in result
+    
+    # Should NOT contain window indicator when window equals total turns
+    assert "[Showing last" not in result
+    
+    # Should contain the single turn
+    assert "[TURN 1 (RED)]" in result
+    assert "RED rolled 2+3 = 5" in result
+
+
+def test_format_public_history_window_larger_than_total():
+    """Test that window larger than total turns shows all turns"""
+    records = (
+        _rec(Color.RED, ActionType.BUILD_SETTLEMENT, 0),
+        _rec(Color.RED, ActionType.BUILD_ROAD, (0, 1)),
+        _rec(Color.BLUE, ActionType.BUILD_SETTLEMENT, 5),
+        _rec(Color.BLUE, ActionType.BUILD_ROAD, (5, 6)),
+        _rec(Color.RED, ActionType.ROLL, (2, 3), (2, 3)),
+        _rec(Color.RED, ActionType.END_TURN),
+        _rec(Color.BLUE, ActionType.ROLL, (6, 1), (6, 1)),
+        _rec(Color.BLUE, ActionType.END_TURN),
+    )
+    
+    result = format_public_history_window(records, window_size=10)
+    
+    # Should contain setup and both turns (no window indicator since window >= total)
+    assert "[SETUP]" in result
+    assert "[TURN 1 (RED)]" in result
+    assert "[TURN 2 (BLUE)]" in result
+    assert "[Showing last" not in result
 
 
 if __name__ == "__main__":
