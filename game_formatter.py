@@ -118,6 +118,7 @@ def get_full_board_map(public_state: PublicState) -> str:
     """
     Returns a formatted text representation of all 19 hexes from the public_state.
     This is static throughout the game - robber position is not included.
+    Now includes adjacent node IDs for each tile.
 
     Args:
         public_state: The public state object from Observation agent containing map information
@@ -130,6 +131,19 @@ def get_full_board_map(public_state: PublicState) -> str:
     # Extract tile information from public_state.board.map.tiles
     # tiles: Dict[int, Tuple[Optional[FastResource], Optional[int]]] - tile_id -> (resource, roll)
     tiles = public_state.board.map.tiles
+    
+    # Build tile_id -> node_ids mapping by inverting adjacent_tiles
+    # adjacent_tiles: Dict[NodeId, Tuple[int, ...]] - node_id -> tile ids touching it
+    tile_to_nodes = {}
+    for node_id, tile_ids in public_state.board.map.adjacent_tiles.items():
+        for tile_id in tile_ids:
+            if tile_id not in tile_to_nodes:
+                tile_to_nodes[tile_id] = []
+            tile_to_nodes[tile_id].append(node_id)
+    
+    # Sort node IDs for each tile for deterministic output
+    for tile_id in tile_to_nodes:
+        tile_to_nodes[tile_id].sort()
     
     # Sort tile IDs for deterministic output
     for tile_id in sorted(tiles.keys()):
@@ -144,7 +158,11 @@ def get_full_board_map(public_state: PublicState) -> str:
             pips = get_pip_count(roll)
             resource_pips_str = f"{roll} {resource_name} ({pips} pips)"
 
-        lines.append(f"Tile {tile_id:>2}: {resource_pips_str}")
+        # Get adjacent node IDs for this tile
+        adjacent_node_ids = tile_to_nodes.get(tile_id, [])
+        nodes_str = f"Nodes: {adjacent_node_ids}" if adjacent_node_ids else "Nodes: []"
+        
+        lines.append(f"Tile {tile_id:>2}: {resource_pips_str}, {nodes_str}")
 
     return "\n".join(lines)
 
