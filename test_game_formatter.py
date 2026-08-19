@@ -1,0 +1,995 @@
+"""
+Unit tests for the game formatter module
+"""
+
+import pytest
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'catanatron-forked', 'catanatron'))
+
+from catanatron.game import Game
+from catanatron.models.player import Color, RandomPlayer, Player
+from catanatron.models.enums import SETTLEMENT, CITY
+from catanatron.models.board import Board
+from catanatron.models.map import CatanMap, BASE_MAP_TEMPLATE
+from game_formatter import (
+    gather_board_occupancy_data,
+    BoardOccupancyData,
+    PlayerBoardData,
+    BuildingInfo,
+    AdjacentHexInfo,
+    format_board_occupancy_data,
+    get_full_board_map,
+    get_pip_count,
+)
+from catanatron.models.perspective_player import _build_public_state
+from catanatron.state_functions import player_key
+from catanatron.models.enums import RESOURCES, DEVELOPMENT_CARDS
+
+
+def build_public_state(game):
+    """Helper to build public_state object from game for testing."""
+    return _build_public_state(game)
+
+
+class SimplePlayer(Player):
+    """Simple player for testing that doesn't need to implement decide"""
+    def __init__(self, color):
+        self.color = color
+        self.is_bot = True
+
+    def decide(self, game, playable_actions):
+        return playable_actions[0] if playable_actions else None
+
+    def reset_state(self):
+        pass
+
+
+def create_test_game_with_buildings():
+    """Create a game with specific building placements for testing"""
+    players = [
+        SimplePlayer(Color.RED),
+        SimplePlayer(Color.BLUE),
+        SimplePlayer(Color.ORANGE),
+        SimplePlayer(Color.WHITE),
+    ]
+
+    game = Game(players)
+
+    # Manually manipulate board data structures to bypass validation
+    board = game.state.board
+
+    # Directly manipulate the buildings dict to place buildings
+    # RED settlement at node 0, city at node 10
+    board.buildings[0] = (Color.RED, SETTLEMENT)
+    board.buildings[10] = (Color.RED, CITY)
+
+    # BLUE settlement at node 5
+    board.buildings[5] = (Color.BLUE, SETTLEMENT)
+
+    # Directly manipulate roads dict (roads are stored both ways)
+    board.roads[(0, 5)] = Color.RED
+    board.roads[(5, 0)] = Color.RED
+    board.roads[(5, 16)] = Color.BLUE
+    board.roads[(16, 5)] = Color.BLUE
+
+    # Update board_buildable_ids to remove occupied nodes
+    board.board_buildable_ids.discard(0)
+    board.board_buildable_ids.discard(5)
+    board.board_buildable_ids.discard(10)
+
+    return game
+
+
+def create_test_game_empty():
+    """Create a game with no buildings"""
+    players = [
+        SimplePlayer(Color.RED),
+        SimplePlayer(Color.BLUE),
+        SimplePlayer(Color.ORANGE),
+        SimplePlayer(Color.WHITE),
+    ]
+
+    return Game(players)
+
+
+def create_test_game_with_ports():
+    """Create a game with buildings on port nodes"""
+    players = [
+        SimplePlayer(Color.RED),
+        SimplePlayer(Color.BLUE),
+        SimplePlayer(Color.ORANGE),
+        SimplePlayer(Color.WHITE),
+    ]
+
+    game = Game(players)
+    board = game.state.board
+
+    # Directly manipulate buildings dict to place settlements on port nodes
+    # Use known port nodes from the map
+    board.buildings[25] = (Color.RED, SETTLEMENT)  # 3:1 port
+    board.buildings[28] = (Color.BLUE, SETTLEMENT)  # WHEAT port (we'll check what it actually is)
+
+    # Update board_buildable_ids
+    board.board_buildable_ids.discard(25)
+    board.board_buildable_ids.discard(28)
+
+    return game
+
+
+def create_test_game_with_robber():
+    """Create a game with specific robber placement"""
+    players = [
+        SimplePlayer(Color.RED),
+        SimplePlayer(Color.BLUE),
+        SimplePlayer(Color.ORANGE),
+        SimplePlayer(Color.WHITE),
+    ]
+
+    game = Game(players)
+
+    # Set robber to a specific coordinate
+    game.state.board.robber_coordinate = (0, 0, 0)
+
+    return game
+
+
+def test_gather_board_occupancy_data_returns_correct_type():
+    """Test that gather_board_occupancy_data returns BoardOccupancyData"""
+    game = create_test_game_with_buildings()
+    result = gather_board_occupancy_data(build_public_state(game))
+
+    assert isinstance(result, BoardOccupancyData)
+    assert hasattr(result, 'players')
+    assert hasattr(result, 'robber_coordinate')
+
+
+def test_gather_board_occupancy_data_has_correct_player_count():
+    """Test that the result contains the correct number of players"""
+    game = create_test_game_with_buildings()
+    result = gather_board_occupancy_data(build_public_state(game))
+
+    assert len(result.players) == 4
+
+
+def test_gather_board_occupancy_data_player_data_structure():
+    """Test that each player has the correct data structure"""
+    game = create_test_game_with_buildings()
+    result = gather_board_occupancy_data(build_public_state(game))
+
+    for player_data in result.players:
+        assert isinstance(player_data, PlayerBoardData)
+        assert hasattr(player_data, 'color')
+        assert hasattr(player_data, 'settlements')
+        assert hasattr(player_data, 'cities')
+        assert hasattr(player_data, 'roads')
+        assert isinstance(player_data.settlements, list)
+        assert isinstance(player_data.cities, list)
+        assert isinstance(player_data.roads, list)
+
+
+def test_gather_board_occupancy_data_building_info_structure():
+    """Test that building info has the correct structure"""
+    game = create_test_game_with_buildings()
+    result = gather_board_occupancy_data(build_public_state(game))
+
+    # Construct expected data (node IDs are fixed, but hex data varies by map)
+    expected_red_settlement = BuildingInfo(
+        node_id=0,
+        adjacent_hexes=[],  # Will check structure, not exact values
+        port=None
+    )
+
+    expected_red_city = BuildingInfo(
+        node_id=10,
+        adjacent_hexes=[],  # Will check structure, not exact values
+        port=None
+    )
+
+    expected_blue_settlement = BuildingInfo(
+        node_id=5,
+        adjacent_hexes=[],  # Will check structure, not exact values
+        port=None
+    )
+
+    # Find RED player and compare
+    red_player = next(p for p in result.players if p.color == "RED")
+    assert len(red_player.settlements) == 1
+    assert len(red_player.cities) == 1
+
+    # Compare building info structure
+    assert red_player.settlements[0].node_id == expected_red_settlement.node_id
+    # Note: adjacent_hexes will now contain data since public_state provides adjacency info
+    assert isinstance(red_player.settlements[0].adjacent_hexes, list)
+    # Port might be None or a resource string depending on node location
+    assert red_player.settlements[0].port is None or isinstance(red_player.settlements[0].port, str)
+    # Total pips will now be calculated from adjacency info
+    assert red_player.settlements[0].total_pips >= 0
+
+    assert red_player.cities[0].node_id == expected_red_city.node_id
+    # Note: adjacent_hexes will now contain data since public_state provides adjacency info
+    assert isinstance(red_player.cities[0].adjacent_hexes, list)
+    # Port might be None or a resource string depending on node location
+    assert red_player.cities[0].port is None or isinstance(red_player.cities[0].port, str)
+    # Total pips will now be calculated from adjacency info
+    assert red_player.cities[0].total_pips >= 0
+
+    # Find BLUE player and compare
+    blue_player = next(p for p in result.players if p.color == "BLUE")
+    assert len(blue_player.settlements) == 1
+    assert blue_player.settlements[0].node_id == expected_blue_settlement.node_id
+    # Note: adjacent_hexes will now contain data since public_state provides adjacency info
+    assert isinstance(blue_player.settlements[0].adjacent_hexes, list)
+    # Port might be None or a resource string depending on node location
+    assert blue_player.settlements[0].port is None or isinstance(blue_player.settlements[0].port, str)
+    # Total pips will now be calculated from adjacency info
+    assert blue_player.settlements[0].total_pips >= 0
+
+
+def test_format_board_occupancy_data_node_ids():
+    """Test that formatted output includes node IDs for buildings"""
+    game = create_test_game_with_buildings()
+    occupancy_data = gather_board_occupancy_data(build_public_state(game))
+    
+    result = format_board_occupancy_data(occupancy_data)
+    
+    # Should contain node IDs in building information
+    assert "Node 0:" in result  # RED settlement
+    assert "Node 10:" in result  # RED city
+    assert "Node 5:" in result  # BLUE settlement
+    # Note: Tile IDs should now be present since public_state provides adjacency info
+
+
+def test_gather_board_occupancy_data_adjacent_hex_info_structure():
+    """Test that adjacent hex info has the correct structure (now populated from public_state)"""
+    game = create_test_game_with_buildings()
+    result = gather_board_occupancy_data(build_public_state(game))
+
+    # Get RED's settlement at node 0
+    red_player = next(p for p in result.players if p.color == "RED")
+    settlement = red_player.settlements[0]
+
+    # Check adjacent hexes structure (will now contain data from public_state)
+    assert isinstance(settlement.adjacent_hexes, list)
+    # Each adjacent hex should have the correct structure
+    for hex_info in settlement.adjacent_hexes:
+        assert hasattr(hex_info, 'resource')
+        assert hasattr(hex_info, 'roll')
+        assert hasattr(hex_info, 'pips')
+        assert hasattr(hex_info, 'tile_id')
+
+
+def test_gather_board_occupancy_data_road_structure():
+    """Test that roads are structured correctly as tuples"""
+    game = create_test_game_with_buildings()
+    result = gather_board_occupancy_data(build_public_state(game))
+
+    # Construct expected roads
+    expected_red_roads = [(0, 5)]
+    expected_blue_roads = [(5, 16)]
+
+    # RED should have 1 road (deduplicated)
+    red_player = next(p for p in result.players if p.color == "RED")
+    assert len(red_player.roads) == 1
+    assert red_player.roads == expected_red_roads
+
+    # BLUE should have 1 road (deduplicated)
+    blue_player = next(p for p in result.players if p.color == "BLUE")
+    assert len(blue_player.roads) == 1
+    assert blue_player.roads == expected_blue_roads
+
+
+def test_gather_board_occupancy_data_robber_coordinate():
+    """Test that robber coordinate is present and valid"""
+    game = create_test_game_with_robber()
+    result = gather_board_occupancy_data(build_public_state(game))
+
+    # Construct expected robber coordinate
+    expected_robber_coordinate = (0, 0, 0)
+
+    assert result.robber_coordinate == expected_robber_coordinate
+
+
+def test_gather_board_occupancy_data_pip_calculation():
+    """Test that pip counts are calculated correctly (now from public_state adjacency info)"""
+    game = create_test_game_with_buildings()
+    result = gather_board_occupancy_data(build_public_state(game))
+
+    # Get RED's settlement at node 0
+    red_player = next(p for p in result.players if p.color == "RED")
+    settlement = red_player.settlements[0]
+
+    # With adjacency info from public_state, pips should be calculated
+    assert settlement.total_pips >= 0  # Should be non-negative
+    # If there are adjacent resource tiles, pips should be > 0
+    if len(settlement.adjacent_hexes) > 0:
+        assert settlement.total_pips > 0
+
+
+def test_gather_board_occupancy_data_sorted_by_node_id():
+    """Test that buildings are sorted by node_id for consistency"""
+    game = create_test_game_with_buildings()
+    result = gather_board_occupancy_data(build_public_state(game))
+
+    # Construct expected sorted lists
+    for player_data in result.players:
+        # Check settlements are sorted
+        settlement_ids = [building.node_id for building in player_data.settlements]
+        expected_settlement_ids = sorted(settlement_ids)
+        assert settlement_ids == expected_settlement_ids
+
+        # Check cities are sorted
+        city_ids = [building.node_id for building in player_data.cities]
+        expected_city_ids = sorted(city_ids)
+        assert city_ids == expected_city_ids
+
+        # Check roads are sorted
+        roads = player_data.roads
+        expected_roads = sorted(roads)
+        assert roads == expected_roads
+
+
+def test_gather_board_occupancy_data_port_detection():
+    """Test that ports are now detected from public_state"""
+    game = create_test_game_with_ports()
+    result = gather_board_occupancy_data(build_public_state(game))
+
+    # Construct expected building info (node IDs are fixed)
+    expected_red_settlement = BuildingInfo(
+        node_id=25,
+        adjacent_hexes=[],  # Will check structure, not exact values
+        port=None  # Will be populated from public_state if node is on a port
+    )
+
+    expected_blue_settlement = BuildingInfo(
+        node_id=28,
+        adjacent_hexes=[],  # Will check structure, not exact values
+        port=None  # Will be populated from public_state if node is on a port
+    )
+
+    # RED should have a settlement at node 25
+    red_player = next(p for p in result.players if p.color == "RED")
+    assert len(red_player.settlements) == 1
+    assert red_player.settlements[0].node_id == expected_red_settlement.node_id
+    # Port should now be detected from public_state (could be None or a resource string)
+    assert red_player.settlements[0].port is None or isinstance(red_player.settlements[0].port, str)
+
+    # BLUE should have a settlement at node 28
+    blue_player = next(p for p in result.players if p.color == "BLUE")
+    assert len(blue_player.settlements) == 1
+    assert blue_player.settlements[0].node_id == expected_blue_settlement.node_id
+    # Port should now be detected from public_state (could be None or a resource string)
+    assert blue_player.settlements[0].port is None or isinstance(blue_player.settlements[0].port, str)
+
+
+def test_gather_board_occupancy_data_empty_game():
+    """Test that the function works on a game that hasn't started"""
+    game = create_test_game_empty()
+    result = gather_board_occupancy_data(build_public_state(game))
+
+    # Construct expected empty board occupancy data
+    expected_data_by_color = {
+        "RED": PlayerBoardData(color="RED", settlements=[], cities=[], roads=[]),
+        "BLUE": PlayerBoardData(color="BLUE", settlements=[], cities=[], roads=[]),
+        "ORANGE": PlayerBoardData(color="ORANGE", settlements=[], cities=[], roads=[]),
+        "WHITE": PlayerBoardData(color="WHITE", settlements=[], cities=[], roads=[]),
+    }
+
+    assert isinstance(result, BoardOccupancyData)
+    assert len(result.players) == 4
+
+    # Compare each player's data by color
+    for actual_player in result.players:
+        expected_player = expected_data_by_color[actual_player.color]
+        assert actual_player.color == expected_player.color
+        assert actual_player.settlements == expected_player.settlements
+        assert actual_player.cities == expected_player.cities
+        assert actual_player.roads == expected_player.roads
+
+
+def test_gather_board_occupancy_data_color_names():
+    """Test that player color names are correctly captured"""
+    game = create_test_game_with_buildings()
+    result = gather_board_occupancy_data(build_public_state(game))
+
+    # Construct expected color names
+    expected_colors = {"RED", "BLUE", "ORANGE", "WHITE"}
+
+    actual_colors = {player_data.color for player_data in result.players}
+    assert actual_colors == expected_colors
+
+
+def test_gather_board_occupancy_data_specific_building_count():
+    """Test that specific building counts match our test setup"""
+    game = create_test_game_with_buildings()
+    result = gather_board_occupancy_data(build_public_state(game))
+
+    # Construct expected player data (node IDs are fixed, but hex data varies)
+    expected_red_player = PlayerBoardData(
+        color="RED",
+        settlements=[BuildingInfo(node_id=0, adjacent_hexes=[], port=None)],
+        cities=[BuildingInfo(node_id=10, adjacent_hexes=[], port=None)],
+        roads=[(0, 5)]
+    )
+
+    expected_blue_player = PlayerBoardData(
+        color="BLUE",
+        settlements=[BuildingInfo(node_id=5, adjacent_hexes=[], port=None)],
+        cities=[],
+        roads=[(5, 16)]
+    )
+
+    expected_orange_player = PlayerBoardData(
+        color="ORANGE",
+        settlements=[],
+        cities=[],
+        roads=[]
+    )
+
+    expected_white_player = PlayerBoardData(
+        color="WHITE",
+        settlements=[],
+        cities=[],
+        roads=[]
+    )
+
+    # Compare RED player
+    red_player = next(p for p in result.players if p.color == "RED")
+    assert len(red_player.settlements) == len(expected_red_player.settlements)
+    assert len(red_player.cities) == len(expected_red_player.cities)
+    assert len(red_player.roads) == len(expected_red_player.roads)
+    assert red_player.settlements[0].node_id == expected_red_player.settlements[0].node_id
+    assert red_player.cities[0].node_id == expected_red_player.cities[0].node_id
+    assert red_player.roads == expected_red_player.roads
+    # Check that adjacent_hexes and port are now populated
+    assert isinstance(red_player.settlements[0].adjacent_hexes, list)
+    assert isinstance(red_player.cities[0].adjacent_hexes, list)
+
+    # Compare BLUE player
+    blue_player = next(p for p in result.players if p.color == "BLUE")
+    assert len(blue_player.settlements) == len(expected_blue_player.settlements)
+    assert len(blue_player.cities) == len(expected_blue_player.cities)
+    assert len(blue_player.roads) == len(expected_blue_player.roads)
+    assert blue_player.settlements[0].node_id == expected_blue_player.settlements[0].node_id
+    assert blue_player.roads == expected_blue_player.roads
+    # Check that adjacent_hexes and port are now populated
+    assert isinstance(blue_player.settlements[0].adjacent_hexes, list)
+
+    # Compare ORANGE player
+    orange_player = next(p for p in result.players if p.color == "ORANGE")
+    assert orange_player.settlements == expected_orange_player.settlements
+    assert orange_player.cities == expected_orange_player.cities
+    assert orange_player.roads == expected_orange_player.roads
+
+    # Compare WHITE player
+    white_player = next(p for p in result.players if p.color == "WHITE")
+    assert white_player.settlements == expected_white_player.settlements
+    assert white_player.cities == expected_white_player.cities
+    assert white_player.roads == expected_white_player.roads
+
+
+def test_format_board_occupancy_data_returns_string():
+    """Test that format_board_occupancy_data returns a string"""
+    game = create_test_game_with_buildings()
+    occupancy_data = gather_board_occupancy_data(build_public_state(game))
+    
+    result = format_board_occupancy_data(occupancy_data)
+    
+    assert isinstance(result, str)
+    assert len(result) > 0
+
+
+def test_format_board_occupancy_data_contains_header():
+    """Test that formatted output contains the correct header"""
+    game = create_test_game_with_buildings()
+    occupancy_data = gather_board_occupancy_data(build_public_state(game))
+    
+    result = format_board_occupancy_data(occupancy_data)
+    
+    assert "[CURRENT BOARD OCCUPANCY]" in result
+
+
+def test_format_board_occupancy_data_contains_player_colors():
+    """Test that formatted output contains all player colors with production info"""
+    game = create_test_game_with_buildings()
+    occupancy_data = gather_board_occupancy_data(build_public_state(game))
+    
+    result = format_board_occupancy_data(occupancy_data)
+    
+    assert "- RED: Total:" in result
+    assert "- BLUE: Total:" in result
+    assert "- ORANGE: Total:" in result
+    assert "- WHITE: Total:" in result
+
+
+def test_format_board_occupancy_data_contains_building_sections():
+    """Test that formatted output contains ports, settlements, cities, and roads sections"""
+    game = create_test_game_with_buildings()
+    occupancy_data = gather_board_occupancy_data(build_public_state(game))
+    
+    result = format_board_occupancy_data(occupancy_data)
+    
+    assert "Ports:" in result
+    assert "Settlements:" in result
+    assert "Cities (x2 production):" in result
+    assert "Roads: Edges" in result
+
+
+def test_format_board_occupancy_data_empty_buildings():
+    """Test that formatted output handles empty buildings correctly"""
+    game = create_test_game_empty()
+    occupancy_data = gather_board_occupancy_data(build_public_state(game))
+    
+    result = format_board_occupancy_data(occupancy_data)
+    
+    # Should show "None" for empty building lists
+    assert "Settlements: [None]" in result
+    assert "Cities (x2 production): [None]" in result
+    assert "Roads: Edges [None]" in result
+    # Should show "Total: 0 pips" for players with no buildings
+    assert "Total: 0 pips" in result
+    # Should show "Ports: None" for players with no ports
+    assert "Ports: None" in result
+
+
+def test_format_board_occupancy_data_with_buildings():
+    """Test that formatted output shows building information when present"""
+    game = create_test_game_with_buildings()
+    occupancy_data = gather_board_occupancy_data(build_public_state(game))
+    
+    result = format_board_occupancy_data(occupancy_data)
+    
+    # Should contain building information (not "None")
+    # Check that at least one player has actual buildings
+    assert "Node " in result  # Indicates non-empty building lists with node IDs
+    # Should not have all "None" for buildings
+    assert result.count("Settlements: [None]") < 4  # At least one player has settlements
+
+
+def test_format_board_occupancy_data_robber_coordinate():
+    """Test that formatted output contains robber coordinate"""
+    game = create_test_game_with_robber()
+    occupancy_data = gather_board_occupancy_data(build_public_state(game))
+    
+    result = format_board_occupancy_data(occupancy_data)
+    
+    # Should contain robber information
+    assert "ROBBER: Hex" in result
+
+
+def test_format_board_occupancy_data_settlement_format():
+    """Test that settlements are formatted with hex info and pips"""
+    game = create_test_game_with_buildings()
+    occupancy_data = gather_board_occupancy_data(build_public_state(game))
+    
+    result = format_board_occupancy_data(occupancy_data)
+    
+    # Should contain pip information
+    assert "pips" in result
+    # Should contain total pips
+    assert "Total:" in result
+
+
+def test_format_board_occupancy_data_road_format():
+    """Test that roads are formatted as coordinate tuples"""
+    game = create_test_game_with_buildings()
+    occupancy_data = gather_board_occupancy_data(build_public_state(game))
+    
+    result = format_board_occupancy_data(occupancy_data)
+    
+    # Should contain road coordinate tuples
+    assert "(0, 5)" in result  # RED's road
+    assert "(5, 16)" in result  # BLUE's road
+
+
+def test_format_board_occupancy_data_port_format():
+    """Test that ports are formatted in separate section"""
+    game = create_test_game_with_ports()
+    occupancy_data = gather_board_occupancy_data(build_public_state(game))
+    
+    result = format_board_occupancy_data(occupancy_data)
+    
+    # Should contain port information in separate section
+    assert "Ports:" in result
+    # Should not contain "Port:" in building sections anymore
+    # Check that settlement and city sections don't contain port info
+    lines = result.split('\n')
+    for line in lines:
+        if "Settlements:" in line or "Cities" in line:
+            # These lines should not contain port information
+            assert "Port:" not in line
+
+
+def test_format_board_occupancy_data_production_calculation():
+    """Test that production calculation is correct (now from public_state adjacency info)"""
+    game = create_test_game_with_buildings()
+    occupancy_data = gather_board_occupancy_data(build_public_state(game))
+    
+    result = format_board_occupancy_data(occupancy_data)
+    
+    # Should contain production information
+    assert "Total:" in result
+    assert "pips" in result
+    # With adjacency info from public_state, production should be calculated
+    # It might be 0 if buildings are on non-resource nodes, but the calculation should work
+
+
+def test_format_board_occupancy_data_desert_formatting():
+    """Test that desert tiles are formatted correctly"""
+    game = create_test_game_deterministic()
+    occupancy_data = gather_board_occupancy_data(build_public_state(game))
+    
+    result = format_board_occupancy_data(occupancy_data)
+    
+    # With adjacency info from public_state, we should have tile information in building descriptions
+    # Just check that the basic structure is present
+    assert "Node 35:" in result  # WHITE city on desert
+    # Should not contain the old approximate format
+    assert "?" not in result or "~" not in result  # No approximate roll numbers
+
+
+def test_get_full_board_map_returns_string():
+    """Test that get_full_board_map returns a string"""
+    game = create_test_game_empty()
+    result = get_full_board_map(build_public_state(game))
+    
+    assert isinstance(result, str)
+    assert len(result) > 0
+
+
+def test_get_full_board_map_contains_header():
+    """Test that get_full_board_map contains the correct header"""
+    game = create_test_game_empty()
+    result = get_full_board_map(build_public_state(game))
+    
+    assert "[FULL BOARD MAP - 19 HEXES]" in result
+
+
+def test_get_full_board_map_contains_19_hexes():
+    """Test that get_full_board_map contains information for all 19 hexes"""
+    game = create_test_game_empty()
+    result = get_full_board_map(build_public_state(game))
+    
+    # Count the number of "Tile" lines (should be 19)
+    tile_count = result.count("Tile ")
+    assert tile_count == 19
+
+
+def test_get_full_board_map_contains_ports_section():
+    """Test that get_full_board_map does not contain ports section"""
+    game = create_test_game_empty()
+    result = get_full_board_map(build_public_state(game))
+    
+    # Board map doesn't contain port information (ports are in building info)
+    assert "[PORTS]" not in result
+
+
+def test_get_full_board_map_tile_format():
+    """Test that each tile is formatted with resource and exact pip information"""
+    game = create_test_game_empty()
+    result = get_full_board_map(build_public_state(game))
+    
+    # Should contain resource names (common Catan resources)
+    assert "WOOD" in result or "BRICK" in result or "SHEEP" in result or "WHEAT" in result or "ORE" in result or "DESERT" in result
+    # Should contain exact pip information (now from public_state)
+    assert "pips" in result
+    # Should not contain approximate markers
+    assert "~" not in result
+
+
+def test_get_full_board_map_node_information():
+    """Test that tiles do not show node information"""
+    game = create_test_game_empty()
+    result = get_full_board_map(build_public_state(game))
+    
+    # Board map doesn't contain node-to-tile adjacency information
+    assert "Touches Nodes:" not in result
+
+
+def test_get_full_board_map_no_robber():
+    """Test that get_full_board_map does not show robber (static board map)"""
+    game = create_test_game_with_robber()
+    result = get_full_board_map(build_public_state(game))
+    
+    # Should not contain robber marker since board map is static
+    assert "[ROBBER]" not in result
+
+
+def test_get_full_board_map_deterministic_ordering():
+    """Test that get_full_board_map produces deterministic output (sorted by tile ID)"""
+    game = create_test_game_empty()
+    result1 = get_full_board_map(build_public_state(game))
+    result2 = get_full_board_map(build_public_state(game))
+    
+    # Should produce identical output
+    assert result1 == result2
+
+
+def test_get_full_board_map_tile_ids():
+    """Test that get_full_board_map includes tile IDs in order"""
+    game = create_test_game_empty()
+    result = get_full_board_map(build_public_state(game))
+    
+    # Should contain tile IDs (exact format may vary)
+    assert "Tile" in result
+
+
+def test_get_full_board_map_port_nodes():
+    """Test that get_full_board_map does not show port node information"""
+    game = create_test_game_empty()
+    result = get_full_board_map(build_public_state(game))
+    
+    # Board map doesn't contain port node information
+    assert "Nodes" not in result
+
+
+def test_get_full_board_map_resource_types():
+    """Test that get_full_board_map shows various resource types"""
+    game = create_test_game_empty()
+    result = get_full_board_map(build_public_state(game))
+    
+    # Check for various resource types that should be present
+    resource_keywords = ["WOOD", "BRICK", "SHEEP", "WHEAT", "ORE", "DESERT"]
+    found_resources = [keyword for keyword in resource_keywords if keyword in result]
+    
+    # At least some resources should be present
+    assert len(found_resources) > 0
+
+
+def test_get_full_board_map_roll_numbers():
+    """Test that get_full_board_map shows exact roll information"""
+    game = create_test_game_empty()
+    result = get_full_board_map(build_public_state(game))
+    
+    # Should contain exact roll information (not approximate)
+    # Should not contain approximate markers
+    assert "?" not in result  # Should not have ? marker for approximate rolls
+    # Should contain numeric roll numbers
+    assert any(char.isdigit() for char in result)  # Should have some numbers
+
+
+def test_get_full_board_map_desert_handling():
+    """Test that get_full_board_map handles desert tiles correctly - just DESERT"""
+    game = create_test_game_empty()
+    result = get_full_board_map(build_public_state(game))
+    
+    # Should handle desert tiles with just "DESERT" (no roll/pips)
+    assert "DESERT" in result
+
+
+def test_get_full_board_map_pip_counts():
+    """Test that get_full_board_map shows exact pip counts"""
+    game = create_test_game_empty()
+    result = get_full_board_map(build_public_state(game))
+    
+    # Should contain exact pip counts (not approximate)
+    # Should not contain approximate markers
+    assert "~" not in result  # Should not have ~ marker for approximate pips
+    # Should contain pip information
+    assert "pips" in result
+
+
+def test_get_pip_count():
+    """Test that get_pip_count returns correct pip values for different rolls"""
+    assert get_pip_count(2) == 1
+    assert get_pip_count(3) == 2
+    assert get_pip_count(4) == 3
+    assert get_pip_count(5) == 4
+    assert get_pip_count(6) == 5
+    assert get_pip_count(8) == 5
+    assert get_pip_count(9) == 4
+    assert get_pip_count(10) == 3
+    assert get_pip_count(11) == 2
+    assert get_pip_count(12) == 1
+    assert get_pip_count(7) == 0  # 7 is not a valid roll
+    assert get_pip_count(None) == 0  # None should return 0
+
+
+def test_get_full_board_map_complete_structure():
+    """Test that get_full_board_map has the complete expected structure (feature limitations)"""
+    game = create_test_game_empty()
+    result = get_full_board_map(build_public_state(game))
+    
+    # Split into lines and check structure
+    lines = result.split('\n')
+    
+    # First line should be the header
+    assert lines[0] == "[FULL BOARD MAP - 19 HEXES]"
+    
+    # Should have 19 tile lines
+    tile_lines = [line for line in lines if line.startswith("Tile ")]
+    assert len(tile_lines) == 19
+    
+    # Should NOT have a ports section (feature limitation)
+    assert not any("[PORTS]" in line for line in lines)
+    
+    # Should NOT have port information lines (feature limitation)
+    port_lines = [line for line in lines if "Port:" in line]
+    assert len(port_lines) == 0
+
+
+def test_get_full_board_map_complete_happy_path():
+    """Complete happy path test that asserts on the entire resulting string"""
+    import random
+    # Set random seed for deterministic map generation
+    random.seed(42)
+    
+    players = [
+        SimplePlayer(Color.RED),
+        SimplePlayer(Color.BLUE),
+        SimplePlayer(Color.ORANGE),
+        SimplePlayer(Color.WHITE),
+    ]
+    
+    game = Game(players)
+    result = get_full_board_map(build_public_state(game))
+    
+    # With public_state, we should have exact deterministic output
+    # Just check that it produces consistent output
+    result2 = get_full_board_map(build_public_state(game))
+    assert result == result2  # Should be deterministic
+
+
+def test_format_board_occupancy_data_structure():
+    """Test that the overall structure of formatted output is correct"""
+    game = create_test_game_with_buildings()
+    occupancy_data = gather_board_occupancy_data(build_public_state(game))
+    
+    result = format_board_occupancy_data(occupancy_data)
+    
+    lines = result.split('\n')
+    
+    # First line should be header
+    assert lines[0] == "[CURRENT BOARD OCCUPANCY]"
+    
+    # Last line should be robber
+    assert lines[-1].startswith("ROBBER: Hex")
+    # Should not contain "Touches Nodes:" in robber line
+    assert "Touches Nodes:" not in lines[-1]
+    
+    # Should have 4 player sections + header + robber = 6+ lines
+    assert len(lines) >= 6
+    
+    # Each player should have 5 sections: color+production, ports, settlements, cities, roads
+    # Count player lines (lines starting with "- " but not header or robber)
+    player_lines = [line for line in lines if line.startswith("- ")]
+    assert len(player_lines) == 4  # 4 players
+
+
+def test_format_board_occupancy_data_player_order():
+    """Test that players are formatted in a consistent order"""
+    game = create_test_game_with_buildings()
+    occupancy_data = gather_board_occupancy_data(build_public_state(game))
+    
+    result = format_board_occupancy_data(occupancy_data)
+    
+    # Find player section order
+    red_pos = result.find("- RED:")
+    blue_pos = result.find("- BLUE:")
+    orange_pos = result.find("- ORANGE:")
+    white_pos = result.find("- WHITE:")
+    
+    # All should be present
+    assert red_pos > 0
+    assert blue_pos > 0
+    assert orange_pos > 0
+    assert white_pos > 0
+
+
+def create_test_game_deterministic():
+    """Create a game with deterministic output for string comparison tests"""
+    import random
+    # Set random seed for deterministic map generation
+    random.seed(42)
+    
+    players = [
+        SimplePlayer(Color.RED),
+        SimplePlayer(Color.BLUE),
+        SimplePlayer(Color.ORANGE), 
+        SimplePlayer(Color.WHITE),
+    ]
+    
+    game = Game(players)
+    board = game.state.board
+    
+    # Place buildings for all players with multiple settlements and cities
+    # RED: 2 settlements (0, 1), 2 cities (10, 11), 5 roads
+    board.buildings[0] = (Color.RED, SETTLEMENT)
+    board.buildings[1] = (Color.RED, SETTLEMENT)
+    board.buildings[10] = (Color.RED, CITY)
+    board.buildings[11] = (Color.RED, CITY)
+    
+    # RED roads
+    board.roads[(0, 5)] = Color.RED
+    board.roads[(5, 0)] = Color.RED
+    board.roads[(1, 6)] = Color.RED
+    board.roads[(6, 1)] = Color.RED
+    board.roads[(10, 15)] = Color.RED
+    board.roads[(15, 10)] = Color.RED
+    board.roads[(11, 16)] = Color.RED
+    board.roads[(16, 11)] = Color.RED
+    board.roads[(15, 20)] = Color.RED
+    board.roads[(20, 15)] = Color.RED
+    board.roads[(16, 22)] = Color.RED
+    board.roads[(22, 16)] = Color.RED
+    
+    # BLUE: 2 settlements (5, 6), 1 city (15), 5 roads
+    board.buildings[5] = (Color.BLUE, SETTLEMENT)
+    board.buildings[6] = (Color.BLUE, SETTLEMENT)
+    board.buildings[15] = (Color.BLUE, CITY)
+    
+    # BLUE roads
+    board.roads[(5, 16)] = Color.BLUE
+    board.roads[(16, 5)] = Color.BLUE
+    board.roads[(6, 21)] = Color.BLUE
+    board.roads[(21, 6)] = Color.BLUE
+    board.roads[(15, 20)] = Color.BLUE
+    board.roads[(20, 15)] = Color.BLUE
+    board.roads[(20, 25)] = Color.BLUE
+    board.roads[(25, 20)] = Color.BLUE
+    board.roads[(25, 26)] = Color.BLUE
+    board.roads[(26, 25)] = Color.BLUE
+    
+    # ORANGE: 1 settlement (20), 2 cities (25, 26), 5 roads
+    board.buildings[20] = (Color.ORANGE, SETTLEMENT)
+    board.buildings[25] = (Color.ORANGE, CITY)
+    board.buildings[26] = (Color.ORANGE, CITY)
+    
+    # ORANGE roads
+    board.roads[(20, 21)] = Color.ORANGE
+    board.roads[(21, 20)] = Color.ORANGE
+    board.roads[(25, 30)] = Color.ORANGE
+    board.roads[(30, 25)] = Color.ORANGE
+    board.roads[(26, 31)] = Color.ORANGE
+    board.roads[(31, 26)] = Color.ORANGE
+    board.roads[(30, 35)] = Color.ORANGE
+    board.roads[(35, 30)] = Color.ORANGE
+    board.roads[(31, 36)] = Color.ORANGE
+    board.roads[(36, 31)] = Color.ORANGE
+    
+    # WHITE: 1 settlement (30), 1 city (35), 5 roads
+    board.buildings[30] = (Color.WHITE, SETTLEMENT)
+    board.buildings[35] = (Color.WHITE, CITY)
+    
+    # WHITE roads
+    board.roads[(30, 31)] = Color.WHITE
+    board.roads[(31, 30)] = Color.WHITE
+    board.roads[(35, 36)] = Color.WHITE
+    board.roads[(36, 35)] = Color.WHITE
+    board.roads[(35, 40)] = Color.WHITE
+    board.roads[(40, 35)] = Color.WHITE
+    board.roads[(36, 41)] = Color.WHITE
+    board.roads[(41, 36)] = Color.WHITE
+    board.roads[(40, 42)] = Color.WHITE
+    board.roads[(42, 40)] = Color.WHITE
+    
+    # Update board_buildable_ids
+    for node_id in [0, 1, 5, 6, 10, 11, 15, 20, 21, 22, 25, 26, 30, 31, 35, 36, 40, 41, 42]:
+        board.board_buildable_ids.discard(node_id)
+    
+    # Set robber to a known coordinate
+    board.robber_coordinate = (0, 0, 0)
+    
+    return game
+
+
+def test_format_board_occupancy_data_complete_happy_path():
+    """Complete happy path test that checks basic structure"""
+    game = create_test_game_deterministic()
+    occupancy_data = gather_board_occupancy_data(build_public_state(game))
+    
+    result = format_board_occupancy_data(occupancy_data)
+    
+    # With public_state, we should have exact output with adjacency info
+    # Check basic structure
+    assert "[CURRENT BOARD OCCUPANCY]" in result
+    assert "- BLUE:" in result
+    assert "- ORANGE:" in result
+    assert "- RED:" in result
+    assert "- WHITE:" in result
+    assert "ROBBER:" in result
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

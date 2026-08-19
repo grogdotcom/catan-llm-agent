@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Exec(git log)",
+      "Exec(source)",
+      "Exec(sed)",
+      "Exec(find)",
+      "Exec(python3)",
+      "Exec(ls)",
+      "Exec(xargs grep)",
+      "Exec(python)"
+    ]
+  }
+}
