@@ -231,6 +231,96 @@ def gather_board_occupancy_data(public_state: PublicState) -> BoardOccupancyData
     )
 
 
+def calculate_blocked_production(robber_tile_id: int, players: List[PlayerBoardData]) -> Dict[str, str]:
+    """Calculate blocked production for all players based on robber position.
+
+    Args:
+        robber_tile_id: The tile ID where the robber is located
+        players: List of player board data to calculate blocked production
+
+    Returns:
+        Dict[str, str]: Dictionary mapping player colors to blocked production strings
+    """
+    blocked_production = {}
+    
+    for player_data in players:
+        blocked_pips = 0
+        blocked_resource_pips = {"WOOD": 0, "BRICK": 0, "SHEEP": 0, "WHEAT": 0, "ORE": 0}
+        
+        # Check each building to see if it's adjacent to the robber tile
+        for building in player_data.settlements + player_data.cities:
+            for hex_info in building.adjacent_hexes:
+                if hex_info.tile_id == robber_tile_id:
+                    # This building is adjacent to the robber
+                    multiplier = 2 if building in player_data.cities else 1
+                    blocked_pips += hex_info.pips * multiplier
+                    if hex_info.resource in blocked_resource_pips:
+                        blocked_resource_pips[hex_info.resource] += hex_info.pips * multiplier
+        
+        if blocked_pips > 0:
+            blocked_str = f"{blocked_pips} pips"
+            blocked_production[player_data.color] = blocked_str
+    
+    return blocked_production
+
+
+def format_robber_info(public_state: PublicState, players: List[PlayerBoardData]) -> str:
+    """Format robber information including tile details and blocked production.
+
+    Args:
+        public_state: The public state object from Observation agent containing robber information
+        players: List of player board data to calculate blocked production
+
+    Returns:
+        str: Formatted string representation of robber information
+    """
+    lines = []
+    
+    # Get robber tile ID directly from public_state
+    robber_tile_id = public_state.board.robber_tile_id
+    
+    # Get tile information from public_state.board.map.tiles
+    # tiles: Dict[int, Tuple[Optional[FastResource], Optional[int]]] - tile_id -> (resource, roll)
+    robber_resource = None
+    robber_roll = None
+    robber_pips = 0
+    
+    if robber_tile_id is not None and robber_tile_id in public_state.board.map.tiles:
+        resource, roll = public_state.board.map.tiles[robber_tile_id]
+        robber_resource = resource
+        robber_roll = roll
+        robber_pips = get_pip_count(roll)
+    
+    # Calculate blocked production if we have a valid robber tile
+    blocked_production = {}
+    if robber_tile_id is not None:
+        blocked_production = calculate_blocked_production(robber_tile_id, players)
+    
+    # Format robber information
+    if robber_tile_id is not None:
+        if robber_resource is None:
+            tile_info = f"Tile {robber_tile_id}: DESERT"
+        else:
+            resource_name = robber_resource.name if hasattr(robber_resource, 'name') else str(robber_resource)
+            tile_info = f"Tile {robber_tile_id}: {robber_roll} {resource_name} ({robber_pips} pips)"
+        
+        lines.append(f"ROBBER: Tile {robber_tile_id} - {tile_info}")
+        
+        # Add blocked production information
+        if blocked_production:
+            for color, blocked_str in sorted(blocked_production.items()):
+                lines.append(f"  * Blocking {color}: {blocked_str}")
+        else:
+            lines.append(f"  * Blocking: None")
+    else:
+        # Fallback if we couldn't find tile information
+        lines.append(f"ROBBER: Unknown position")
+        lines.append(f"  * Tile info: Could not determine robber tile")
+        lines.append(f"  * Blocking: None")
+    
+    return "\n".join(lines)
+
+
 def _calculate_production(buildings: List[BuildingInfo], multiplier: int = 1) -> tuple[int, Dict[str, int]]:
     """Calculate production statistics from a list of buildings.
 

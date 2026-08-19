@@ -21,6 +21,8 @@ from game_formatter import (
     BuildingInfo,
     AdjacentHexInfo,
     format_board_occupancy_data,
+    format_robber_info,
+    calculate_blocked_production,
     get_full_board_map,
     get_pip_count,
 )
@@ -1103,6 +1105,283 @@ def test_format_board_occupancy_data_exact_string_deterministic_game():
   * Roads: Edges [(30, 31), (35, 36), (35, 40), (36, 41), (40, 42)]"""
     
     assert result == expected
+
+
+# ============================================================================
+# calculate_blocked_production unit tests
+# ============================================================================
+
+def test_calculate_blocked_production_returns_dict():
+    """Test that calculate_blocked_production returns a dictionary"""
+    game = create_test_game_deterministic()
+    public_state = build_public_state(game)
+    occupancy_data = gather_board_occupancy_data(public_state)
+    
+    result = calculate_blocked_production(0, occupancy_data.players)
+    
+    assert isinstance(result, dict)
+
+
+def test_calculate_blocked_production_empty_players():
+    """Test that calculate_blocked_production handles empty player list"""
+    result = calculate_blocked_production(0, [])
+    
+    assert result == {}
+
+
+def test_calculate_blocked_production_no_blocking():
+    """Test that calculate_blocked_production returns empty dict when no buildings are adjacent"""
+    game = create_test_game_empty()
+    public_state = build_public_state(game)
+    occupancy_data = gather_board_occupancy_data(public_state)
+    
+    # Use a tile ID that has no adjacent buildings
+    result = calculate_blocked_production(0, occupancy_data.players)
+    
+    assert result == {}
+
+
+def test_calculate_blocked_production_with_blocking():
+    """Test that calculate_blocked_production calculates blocked production correctly"""
+    game = create_test_game_deterministic()
+    public_state = build_public_state(game)
+    occupancy_data = gather_board_occupancy_data(public_state)
+    
+    # Tile 0 should block RED and BLUE
+    result = calculate_blocked_production(0, occupancy_data.players)
+    
+    assert len(result) > 0
+    assert "RED" in result or "BLUE" in result
+
+
+def test_calculate_blocked_production_city_multiplier():
+    """Test that cities get 2x multiplier in blocked production calculation"""
+    # Create a custom game with a city adjacent to the robber
+    players = [
+        SimplePlayer(Color.RED),
+        SimplePlayer(Color.BLUE),
+        SimplePlayer(Color.ORANGE),
+        SimplePlayer(Color.WHITE),
+    ]
+    
+    game = Game(players)
+    board = game.state.board
+    
+    # Place a RED city at node 0 (adjacent to Tile 0)
+    board.buildings[0] = (Color.RED, CITY)
+    board.board_buildable_ids.discard(0)
+    
+    public_state = build_public_state(game)
+    occupancy_data = gather_board_occupancy_data(public_state)
+    
+    result = calculate_blocked_production(0, occupancy_data.players)
+    
+    # The city should block 2x the pips (4 pips instead of 2)
+    assert "RED" in result
+    assert "4 pips" in result["RED"]
+
+
+# format_robber_info unit tests
+# ============================================================================
+
+def test_format_robber_info_returns_string():
+    """Test that format_robber_info returns a string"""
+    game = create_test_game_with_robber()
+    public_state = build_public_state(game)
+    players = []
+    
+    result = format_robber_info(public_state, players)
+    
+    assert isinstance(result, str)
+    assert len(result) > 0
+
+
+def test_format_robber_info_contains_robber_header():
+    """Test that format_robber_info contains the robber header"""
+    game = create_test_game_with_robber()
+    public_state = build_public_state(game)
+    players = []
+    
+    result = format_robber_info(public_state, players)
+    
+    assert "ROBBER:" in result
+
+
+def test_format_robber_info_without_game():
+    """Test that format_robber_info works with public_state only"""
+    game = create_test_game_with_robber()
+    public_state = build_public_state(game)
+    players = []
+    
+    result = format_robber_info(public_state, players)
+    
+    # Should return robber tile information from public_state
+    assert "ROBBER:" in result
+    assert "Tile" in result
+
+
+def test_format_robber_info_with_empty_players():
+    """Test that format_robber_info works with empty player list"""
+    game = create_test_game_with_robber()
+    public_state = build_public_state(game)
+    players = []
+    
+    result = format_robber_info(public_state, players)
+    
+    # Should show "Blocking: None" when no players
+    assert "Blocking: None" in result
+
+
+def test_format_robber_info_with_blocked_production():
+    """Test that format_robber_info calculates blocked production correctly"""
+    game = create_test_game_deterministic()
+    public_state = build_public_state(game)
+    occupancy_data = gather_board_occupancy_data(public_state)
+    
+    result = format_robber_info(public_state, occupancy_data.players)
+    
+    # Should show blocked production for players with buildings adjacent to robber tile
+    assert "Blocking" in result
+    # RED and BLUE have buildings adjacent to the robber tile
+    assert "RED" in result or "BLUE" in result
+
+
+def test_format_robber_info_blocked_production_calculation():
+    """Test that blocked production calculation is correct"""
+    game = create_test_game_deterministic()
+    public_state = build_public_state(game)
+    occupancy_data = gather_board_occupancy_data(public_state)
+    
+    result = format_robber_info(public_state, occupancy_data.players)
+    
+    # RED has settlement at node 0 (adjacent to robber tile) - 2 pips blocked
+    # RED has settlement at node 1 (adjacent to robber tile) - 2 pips blocked
+    # Total for RED: 4 pips blocked
+    assert "Blocking RED: 4 pips" in result
+    
+    # BLUE has settlement at node 5 (adjacent to robber tile) - 2 pips blocked
+    assert "Blocking BLUE: 2 pips" in result
+
+
+def test_format_robber_info_no_blocked_production():
+    """Test that format_robber_info shows no blocking when no buildings are adjacent"""
+    game = create_test_game_empty()
+    public_state = build_public_state(game)
+    occupancy_data = gather_board_occupancy_data(public_state)
+    
+    result = format_robber_info(public_state, occupancy_data.players)
+    
+    # Should show "Blocking: None" when no buildings are adjacent
+    assert "Blocking: None" in result
+
+
+def test_format_robber_info_tile_information():
+    """Test that format_robber_info includes tile information from public_state"""
+    game = create_test_game_deterministic()
+    public_state = build_public_state(game)
+    players = []
+    
+    result = format_robber_info(public_state, players)
+    
+    # Should include tile information
+    assert "Tile" in result
+    assert "SHEEP" in result
+    assert "2 pips" in result
+
+
+def test_format_robber_info_desert_tile():
+    """Test that format_robber_info handles desert tiles correctly"""
+    game = create_test_game_empty()
+    public_state = build_public_state(game)
+    players = []
+    
+    # Find the actual desert tile ID from the public_state
+    desert_tile_id = None
+    for tile_id, (resource, roll) in public_state.board.map.tiles.items():
+        if resource is None:  # Desert tile has None resource
+            desert_tile_id = tile_id
+            break
+    
+    if desert_tile_id is not None:
+        # Manually set robber to desert tile for testing
+        # We need to create a new public_state with robber on desert
+        from dataclasses import replace
+        modified_board = replace(public_state.board, robber_tile_id=desert_tile_id)
+        modified_state = replace(public_state, board=modified_board)
+        
+        result = format_robber_info(modified_state, players)
+        
+        # Should show DESERT for the tile
+        assert "DESERT" in result
+    else:
+        # Skip test if no desert found (shouldn't happen with standard map)
+        pytest.skip("No desert tile found in map")
+
+
+def test_format_robber_info_city_multiplier():
+    """Test that cities get 2x multiplier in blocked production calculation"""
+    # Create a custom game with a city adjacent to the robber
+    players = [
+        SimplePlayer(Color.RED),
+        SimplePlayer(Color.BLUE),
+        SimplePlayer(Color.ORANGE),
+        SimplePlayer(Color.WHITE),
+    ]
+    
+    game = Game(players)
+    board = game.state.board
+    
+    # Place a RED city at node 0 (adjacent to Tile 0)
+    board.buildings[0] = (Color.RED, CITY)
+    board.board_buildable_ids.discard(0)
+    
+    # Set robber to Tile 0
+    board.robber_tile_id = 0
+    
+    public_state = build_public_state(game)
+    
+    # Manually override the robber position in public_state to ensure it's on Tile 0
+    from dataclasses import replace
+    modified_board = replace(public_state.board, robber_tile_id=0)
+    modified_state = replace(public_state, board=modified_board)
+    
+    occupancy_data = gather_board_occupancy_data(modified_state)
+    result = format_robber_info(modified_state, occupancy_data.players)
+    
+    # The city should block 2x the pips (4 pips instead of 2)
+    assert "Blocking RED: 4 pips" in result
+
+
+def test_format_robber_info_multiple_players_blocked():
+    """Test that format_robber_info shows blocked production for multiple players"""
+    game = create_test_game_deterministic()
+    public_state = build_public_state(game)
+    occupancy_data = gather_board_occupancy_data(public_state)
+    
+    result = format_robber_info(public_state, occupancy_data.players)
+    
+    # Should show blocked production for multiple players
+    # Count how many "Blocking" lines there are
+    blocking_count = result.count("Blocking")
+    assert blocking_count >= 2  # At least RED and BLUE should be blocked
+
+
+def test_format_robber_info_sorted_players():
+    """Test that blocked production is sorted by player color"""
+    game = create_test_game_deterministic()
+    public_state = build_public_state(game)
+    occupancy_data = gather_board_occupancy_data(public_state)
+    
+    result = format_robber_info(public_state, occupancy_data.players)
+    
+    # Extract the blocking lines
+    lines = result.split('\n')
+    blocking_lines = [line for line in lines if "Blocking" in line and ":" in line]
+    
+    # Check that they are sorted alphabetically by color
+    if len(blocking_lines) > 1:
+        colors = [line.split("Blocking ")[1].split(":")[0] for line in blocking_lines]
+        assert colors == sorted(colors)
 
 
 if __name__ == "__main__":
