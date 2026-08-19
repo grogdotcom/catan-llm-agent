@@ -1384,5 +1384,23 @@ def test_format_robber_info_sorted_players():
         assert colors == sorted(colors)
 
 
+def test_format_robber_info_exact_string_deterministic_game():
+    """Test format_robber_info returns exact expected string for deterministic game"""
+    game = create_test_game_deterministic()
+    public_state = build_public_state(game)
+    occupancy_data = gather_board_occupancy_data(public_state)
+    
+    result = format_robber_info(public_state, occupancy_data.players)
+    
+    # The robber is on Tile 0 (11 SHEEP, 2 pips)
+    # RED has settlements at nodes 0 and 1 (both adjacent to Tile 0) - 4 pips blocked
+    # BLUE has settlement at node 5 (adjacent to Tile 0) - 2 pips blocked
+    expected = """ROBBER: Tile 0 - Tile 0: 11 SHEEP (2 pips)
+  * Blocking BLUE: 2 pips
+  * Blocking RED: 4 pips"""
+    
+    assert result == expected
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
