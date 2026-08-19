@@ -232,7 +232,7 @@ def test_format_board_occupancy_data_node_ids():
     game = create_test_game_with_buildings()
     occupancy_data = gather_board_occupancy_data(build_public_state(game))
     
-    result = format_board_occupancy_data(occupancy_data)
+    result = format_board_occupancy_data(occupancy_data, build_public_state(game), game)
     
     # Should contain node IDs in building information
     assert "Node 0:" in result  # RED settlement
@@ -474,7 +474,7 @@ def test_format_board_occupancy_data_returns_string():
     game = create_test_game_with_buildings()
     occupancy_data = gather_board_occupancy_data(build_public_state(game))
     
-    result = format_board_occupancy_data(occupancy_data)
+    result = format_board_occupancy_data(occupancy_data, build_public_state(game), game)
     
     assert isinstance(result, str)
     assert len(result) > 0
@@ -485,7 +485,7 @@ def test_format_board_occupancy_data_contains_header():
     game = create_test_game_with_buildings()
     occupancy_data = gather_board_occupancy_data(build_public_state(game))
     
-    result = format_board_occupancy_data(occupancy_data)
+    result = format_board_occupancy_data(occupancy_data, build_public_state(game), game)
     
     assert "[CURRENT BOARD OCCUPANCY]" in result
 
@@ -495,7 +495,7 @@ def test_format_board_occupancy_data_contains_player_colors():
     game = create_test_game_with_buildings()
     occupancy_data = gather_board_occupancy_data(build_public_state(game))
     
-    result = format_board_occupancy_data(occupancy_data)
+    result = format_board_occupancy_data(occupancy_data, build_public_state(game), game)
     
     assert "- RED: Total:" in result
     assert "- BLUE: Total:" in result
@@ -508,7 +508,7 @@ def test_format_board_occupancy_data_contains_building_sections():
     game = create_test_game_with_buildings()
     occupancy_data = gather_board_occupancy_data(build_public_state(game))
     
-    result = format_board_occupancy_data(occupancy_data)
+    result = format_board_occupancy_data(occupancy_data, build_public_state(game), game)
     
     assert "Ports:" in result
     assert "Settlements:" in result
@@ -521,7 +521,7 @@ def test_format_board_occupancy_data_empty_buildings():
     game = create_test_game_empty()
     occupancy_data = gather_board_occupancy_data(build_public_state(game))
     
-    result = format_board_occupancy_data(occupancy_data)
+    result = format_board_occupancy_data(occupancy_data, build_public_state(game), game)
     
     # Should show "None" for empty building lists
     assert "Settlements: [None]" in result
@@ -538,7 +538,7 @@ def test_format_board_occupancy_data_with_buildings():
     game = create_test_game_with_buildings()
     occupancy_data = gather_board_occupancy_data(build_public_state(game))
     
-    result = format_board_occupancy_data(occupancy_data)
+    result = format_board_occupancy_data(occupancy_data, build_public_state(game), game)
     
     # Should contain building information (not "None")
     # Check that at least one player has actual buildings
@@ -552,7 +552,7 @@ def test_format_board_occupancy_data_robber_coordinate():
     game = create_test_game_with_robber()
     occupancy_data = gather_board_occupancy_data(build_public_state(game))
     
-    result = format_board_occupancy_data(occupancy_data)
+    result = format_board_occupancy_data(occupancy_data, build_public_state(game), game)
     
     # Should contain robber information
     assert "ROBBER: Hex" in result
@@ -563,7 +563,7 @@ def test_format_board_occupancy_data_settlement_format():
     game = create_test_game_with_buildings()
     occupancy_data = gather_board_occupancy_data(build_public_state(game))
     
-    result = format_board_occupancy_data(occupancy_data)
+    result = format_board_occupancy_data(occupancy_data, build_public_state(game), game)
     
     # Should contain pip information
     assert "pips" in result
@@ -576,7 +576,7 @@ def test_format_board_occupancy_data_road_format():
     game = create_test_game_with_buildings()
     occupancy_data = gather_board_occupancy_data(build_public_state(game))
     
-    result = format_board_occupancy_data(occupancy_data)
+    result = format_board_occupancy_data(occupancy_data, build_public_state(game), game)
     
     # Should contain road coordinate tuples
     assert "(0, 5)" in result  # RED's road
@@ -588,7 +588,7 @@ def test_format_board_occupancy_data_port_format():
     game = create_test_game_with_ports()
     occupancy_data = gather_board_occupancy_data(build_public_state(game))
     
-    result = format_board_occupancy_data(occupancy_data)
+    result = format_board_occupancy_data(occupancy_data, build_public_state(game), game)
     
     # Should contain port information in separate section
     assert "Ports:" in result
@@ -606,7 +606,7 @@ def test_format_board_occupancy_data_production_calculation():
     game = create_test_game_with_buildings()
     occupancy_data = gather_board_occupancy_data(build_public_state(game))
     
-    result = format_board_occupancy_data(occupancy_data)
+    result = format_board_occupancy_data(occupancy_data, build_public_state(game), game)
     
     # Should contain production information
     assert "Total:" in result
@@ -620,7 +620,7 @@ def test_format_board_occupancy_data_desert_formatting():
     game = create_test_game_deterministic()
     occupancy_data = gather_board_occupancy_data(build_public_state(game))
     
-    result = format_board_occupancy_data(occupancy_data)
+    result = format_board_occupancy_data(occupancy_data, build_public_state(game), game)
     
     # With adjacency info from public_state, we should have tile information in building descriptions
     # Just check that the basic structure is present
@@ -836,19 +836,20 @@ def test_format_board_occupancy_data_structure():
     game = create_test_game_with_buildings()
     occupancy_data = gather_board_occupancy_data(build_public_state(game))
     
-    result = format_board_occupancy_data(occupancy_data)
+    result = format_board_occupancy_data(occupancy_data, build_public_state(game), game)
     
     lines = result.split('\n')
     
     # First line should be header
     assert lines[0] == "[CURRENT BOARD OCCUPANCY]"
     
-    # Last line should be robber
-    assert lines[-1].startswith("ROBBER: Hex")
+    # Should have robber section (may be multiple lines with tile info and blocking)
+    robber_lines = [line for line in lines if line.startswith("ROBBER:")]
+    assert len(robber_lines) == 1  # Should have exactly one ROBBER line
     # Should not contain "Touches Nodes:" in robber line
-    assert "Touches Nodes:" not in lines[-1]
+    assert "Touches Nodes:" not in robber_lines[0]
     
-    # Should have 4 player sections + header + robber = 6+ lines
+    # Should have 4 player sections + header + robber section = 6+ lines
     assert len(lines) >= 6
     
     # Each player should have 5 sections: color+production, ports, settlements, cities, roads
@@ -862,7 +863,7 @@ def test_format_board_occupancy_data_player_order():
     game = create_test_game_with_buildings()
     occupancy_data = gather_board_occupancy_data(build_public_state(game))
     
-    result = format_board_occupancy_data(occupancy_data)
+    result = format_board_occupancy_data(occupancy_data, build_public_state(game), game)
     
     # Find player section order
     red_pos = result.find("- RED:")
@@ -968,7 +969,7 @@ def create_test_game_deterministic():
     for node_id in [0, 1, 5, 6, 10, 11, 15, 20, 21, 22, 25, 26, 30, 31, 35, 36, 40, 41, 42]:
         board.board_buildable_ids.discard(node_id)
     
-    # Set robber to a known coordinate
+    # Set robber to a known coordinate (0, 0, 0) which is Tile 0: SHEEP
     board.robber_coordinate = (0, 0, 0)
     
     return game
@@ -979,7 +980,7 @@ def test_format_board_occupancy_data_complete_happy_path():
     game = create_test_game_deterministic()
     occupancy_data = gather_board_occupancy_data(build_public_state(game))
     
-    result = format_board_occupancy_data(occupancy_data)
+    result = format_board_occupancy_data(occupancy_data, build_public_state(game), game)
     
     # With public_state, we should have exact output with adjacency info
     # Check basic structure
@@ -989,6 +990,151 @@ def test_format_board_occupancy_data_complete_happy_path():
     assert "- RED:" in result
     assert "- WHITE:" in result
     assert "ROBBER:" in result
+
+
+def test_get_full_board_map_exact_string_empty_game():
+    """Test get_full_board_map returns exact expected string for empty game"""
+    import random
+    random.seed(42)
+    
+    players = [
+        SimplePlayer(Color.RED),
+        SimplePlayer(Color.BLUE),
+        SimplePlayer(Color.ORANGE),
+        SimplePlayer(Color.WHITE),
+    ]
+    
+    game = Game(players)
+    result = get_full_board_map(build_public_state(game))
+    
+    expected = """[FULL BOARD MAP - 19 HEXES]
+Tile  0: 11 SHEEP (2 pips)
+Tile  1: 10 WOOD (3 pips)
+Tile  2: 3 BRICK (2 pips)
+Tile  3: 6 WOOD (5 pips)
+Tile  4: 5 WHEAT (4 pips)
+Tile  5: 4 WHEAT (3 pips)
+Tile  6: 9 SHEEP (4 pips)
+Tile  7: 5 SHEEP (4 pips)
+Tile  8: 8 BRICK (5 pips)
+Tile  9: 4 WOOD (3 pips)
+Tile 10: 11 ORE (2 pips)
+Tile 11: DESERT
+Tile 12: 12 WOOD (1 pips)
+Tile 13: 9 ORE (4 pips)
+Tile 14: 10 BRICK (3 pips)
+Tile 15: 8 WHEAT (5 pips)
+Tile 16: 3 WHEAT (2 pips)
+Tile 17: 6 ORE (5 pips)
+Tile 18: 2 SHEEP (1 pips)"""
+    
+    assert result == expected
+
+
+def test_get_full_board_map_exact_string_deterministic_game():
+    """Test get_full_board_map returns exact expected string for deterministic game"""
+    game = create_test_game_deterministic()
+    result = get_full_board_map(build_public_state(game))
+    
+    expected = """[FULL BOARD MAP - 19 HEXES]
+Tile  0: 11 SHEEP (2 pips)
+Tile  1: 10 WOOD (3 pips)
+Tile  2: 3 BRICK (2 pips)
+Tile  3: 6 WOOD (5 pips)
+Tile  4: 5 WHEAT (4 pips)
+Tile  5: 4 WHEAT (3 pips)
+Tile  6: 9 SHEEP (4 pips)
+Tile  7: 5 SHEEP (4 pips)
+Tile  8: 8 BRICK (5 pips)
+Tile  9: 4 WOOD (3 pips)
+Tile 10: 11 ORE (2 pips)
+Tile 11: DESERT
+Tile 12: 12 WOOD (1 pips)
+Tile 13: 9 ORE (4 pips)
+Tile 14: 10 BRICK (3 pips)
+Tile 15: 8 WHEAT (5 pips)
+Tile 16: 3 WHEAT (2 pips)
+Tile 17: 6 ORE (5 pips)
+Tile 18: 2 SHEEP (1 pips)"""
+    
+    assert result == expected
+
+
+def test_format_board_occupancy_data_exact_string_empty_game():
+    """Test format_board_occupancy_data returns exact expected string for empty game"""
+    import random
+    random.seed(42)
+    
+    players = [
+        SimplePlayer(Color.RED),
+        SimplePlayer(Color.BLUE),
+        SimplePlayer(Color.ORANGE),
+        SimplePlayer(Color.WHITE),
+    ]
+    
+    game = Game(players)
+    occupancy_data = gather_board_occupancy_data(build_public_state(game))
+    result = format_board_occupancy_data(occupancy_data, build_public_state(game), game)
+    
+    expected = """[CURRENT BOARD OCCUPANCY]
+- BLUE: Total: 0 pips
+  * Ports: None
+  * Settlements: [None]
+  * Cities (x2 production): [None]
+  * Roads: Edges [None]
+- ORANGE: Total: 0 pips
+  * Ports: None
+  * Settlements: [None]
+  * Cities (x2 production): [None]
+  * Roads: Edges [None]
+- RED: Total: 0 pips
+  * Ports: None
+  * Settlements: [None]
+  * Cities (x2 production): [None]
+  * Roads: Edges [None]
+- WHITE: Total: 0 pips
+  * Ports: None
+  * Settlements: [None]
+  * Cities (x2 production): [None]
+  * Roads: Edges [None]
+ROBBER: Hex (-2, 0, 2) - Tile 11: DESERT
+  * Blocking: None"""
+    
+    assert result == expected
+
+
+def test_format_board_occupancy_data_exact_string_deterministic_game():
+    """Test format_board_occupancy_data returns exact expected string for deterministic game"""
+    game = create_test_game_deterministic()
+    occupancy_data = gather_board_occupancy_data(build_public_state(game))
+    result = format_board_occupancy_data(occupancy_data, build_public_state(game), game)
+    
+    expected = """[CURRENT BOARD OCCUPANCY]
+- BLUE: Total: 37 pips (WOOD: 15, SHEEP: 7, WHEAT: 15)
+  * Ports: None
+  * Settlements: [Node 5: (Tile 0: 11 SHEEP (2 pips)), (Tile 4: 5 WHEAT (4 pips)), (Tile 5: 4 WHEAT (3 pips)), Total: 9 pips, Node 6: (Tile 1: 10 WOOD (3 pips)), (Tile 6: 9 SHEEP (4 pips)), (Tile 18: 2 SHEEP (1 pips)), Total: 8 pips]
+  * Cities (x2 production): [Node 15: (Tile 3: 6 WOOD (5 pips)), (Tile 4: 5 WHEAT (4 pips)), (Tile 12: 12 WOOD (1 pips)), Total: 10 pips]
+  * Roads: Edges [(5, 16), (6, 21), (15, 20), (20, 25), (25, 26)]
+- ORANGE: Total: 25 pips (SHEEP: 20, WHEAT: 5)
+  * Ports: SHEEP
+  * Settlements: [Node 20: (Tile 5: 4 WHEAT (3 pips)), (Tile 6: 9 SHEEP (4 pips)), (Tile 16: 3 WHEAT (2 pips)), Total: 9 pips]
+  * Cities (x2 production): [Node 25: (Tile 7: 5 SHEEP (4 pips)), Total: 4 pips, Node 26: (Tile 7: 5 SHEEP (4 pips)), Total: 4 pips]
+  * Roads: Edges [(20, 21), (25, 30), (26, 31), (30, 35), (31, 36)]
+- RED: Total: 52 pips (WOOD: 15, BRICK: 18, SHEEP: 12, WHEAT: 3, ORE: 4)
+  * Ports: None
+  * Settlements: [Node 0: (Tile 0: 11 SHEEP (2 pips)), (Tile 5: 4 WHEAT (3 pips)), (Tile 6: 9 SHEEP (4 pips)), Total: 9 pips, Node 1: (Tile 0: 11 SHEEP (2 pips)), (Tile 1: 10 WOOD (3 pips)), (Tile 6: 9 SHEEP (4 pips)), Total: 9 pips]
+  * Cities (x2 production): [Node 10: (Tile 2: 3 BRICK (2 pips)), (Tile 8: 8 BRICK (5 pips)), (Tile 9: 4 WOOD (3 pips)), Total: 10 pips, Node 11: (Tile 2: 3 BRICK (2 pips)), (Tile 9: 4 WOOD (3 pips)), (Tile 10: 11 ORE (2 pips)), Total: 7 pips]
+  * Roads: Edges [(0, 5), (1, 6), (10, 15), (11, 16), (16, 22)]
+- WHITE: Total: 3 pips (WOOD: 3)
+  * Ports: 3:1
+  * Settlements: [Node 30: (Tile 9: 4 WOOD (3 pips)), Total: 3 pips]
+  * Cities (x2 production): [Node 35: , Total: 0 pips]
+  * Roads: Edges [(30, 31), (35, 36), (35, 40), (36, 41), (40, 42)]
+ROBBER: Hex (0, 0, 0) - Tile 0: 11 SHEEP (2 pips)
+  * Blocking BLUE: 2 pips
+  * Blocking RED: 4 pips"""
+    
+    assert result == expected
 
 
 if __name__ == "__main__":

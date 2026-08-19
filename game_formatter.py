@@ -215,11 +215,13 @@ def gather_board_occupancy_data(public_state: PublicState) -> BoardOccupancyData
     )
 
 
-def format_board_occupancy_data(occupancy_data: BoardOccupancyData) -> str:
+def format_board_occupancy_data(occupancy_data: BoardOccupancyData, public_state: Optional[PublicState] = None, game: Optional[Any] = None) -> str:
     """Format board occupancy data into a readable string.
 
     Args:
         occupancy_data: The board occupancy data to format
+        public_state: Optional public state to get tile coordinate mapping for robber info
+        game: Optional game object to access original board map with coordinate information
 
     Returns:
         str: Formatted string representation of board occupancy
@@ -298,26 +300,88 @@ def format_board_occupancy_data(occupancy_data: BoardOccupancyData) -> str:
         lines.append(f"  * Cities (x2 production): [{', '.join(city_strings) if city_strings else 'None'}]")
         lines.append(f"  * Roads: Edges [{', '.join(road_strings) if road_strings else 'None'}]")
 
-    # Format robber location (simplified since we don't have tile info)
-    robber_str = f"ROBBER: Hex {occupancy_data.robber_coordinate}"
-    lines.append(robber_str)
+    # Format robber location with tile information and blocked production
+    robber_coordinate = occupancy_data.robber_coordinate
+    
+    # Try to get tile coordinate mapping from game object
+    robber_tile_id = None
+    robber_resource = None
+    robber_roll = None
+    robber_pips = 0
+    
+    if game is not None:
+        # Check if game has the necessary attributes
+        if hasattr(game, 'state') and hasattr(game.state, 'board') and hasattr(game.state.board, 'map'):
+            if hasattr(game.state.board.map, 'tiles'):
+                # The tiles dict maps coordinates directly to LandTile objects
+                if robber_coordinate in game.state.board.map.tiles:
+                    tile_data = game.state.board.map.tiles[robber_coordinate]
+                    robber_tile_id = tile_data.id
+                    robber_resource = tile_data.resource
+                    robber_roll = tile_data.number
+                    robber_pips = get_pip_count(robber_roll)
+    
+    # If we found the robber tile, calculate blocked production
+    blocked_production = {}
+    if robber_tile_id is not None:
+        for player_data in occupancy_data.players:
+            blocked_pips = 0
+            blocked_resource_pips = {"WOOD": 0, "BRICK": 0, "SHEEP": 0, "WHEAT": 0, "ORE": 0}
+            
+            # Check each building to see if it's adjacent to the robber tile
+            for building in player_data.settlements + player_data.cities:
+                for hex_info in building.adjacent_hexes:
+                    if hex_info.tile_id == robber_tile_id:
+                        # This building is adjacent to the robber
+                        multiplier = 2 if building in player_data.cities else 1
+                        blocked_pips += hex_info.pips * multiplier
+                        if hex_info.resource in blocked_resource_pips:
+                            blocked_resource_pips[hex_info.resource] += hex_info.pips * multiplier
+            
+            if blocked_pips > 0:
+                blocked_str = f"{blocked_pips} pips"
+                blocked_production[player_data.color] = blocked_str
+    
+    # Format robber information
+    if robber_tile_id is not None:
+        if robber_resource is None:
+            tile_info = f"Tile {robber_tile_id}: DESERT"
+        else:
+            resource_name = robber_resource if isinstance(robber_resource, str) else str(robber_resource)
+            tile_info = f"Tile {robber_tile_id}: {robber_roll} {resource_name} ({robber_pips} pips)"
+        
+        lines.append(f"ROBBER: Hex {robber_coordinate} - {tile_info}")
+        
+        # Add blocked production information
+        if blocked_production:
+            for color, blocked_str in sorted(blocked_production.items()):
+                lines.append(f"  * Blocking {color}: {blocked_str}")
+        else:
+            lines.append(f"  * Blocking: None")
+    else:
+        # Fallback if we couldn't find tile information
+        lines.append(f"ROBBER: Hex {robber_coordinate}")
+        if game is not None:
+            lines.append(f"  * Tile info: Could not determine tile from coordinate")
+            lines.append(f"  * Blocking: Could not determine blocked production")
     
     return "\n".join(lines)
 
 
-def get_board_occupancy(public_state: PublicState) -> str:
+def get_board_occupancy(public_state: PublicState, game: Optional[Any] = None) -> str:
     """
     Extracts only the dynamic buildings, roads, and player claims on the board.
     For each settlement and city, includes basic hex information (resource, roll, port).
 
     Args:
         public_state: The public state object from Observation agent (dynamic state)
+        game: Optional game object to access original board map with coordinate information
 
     Returns:
         str: Formatted string representation of board occupancy
     """
     occupancy_data = gather_board_occupancy_data(public_state)
-    return format_board_occupancy_data(occupancy_data)
+    return format_board_occupancy_data(occupancy_data, public_state, game)
 
 
 def get_player_resources(public_state: PublicState, current_player_color, current_player_inventory: Optional[Inventory] = None) -> str:
