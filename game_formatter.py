@@ -74,30 +74,30 @@ def get_adjacent_hex_info(public_state: PublicState, node_id: int) -> tuple[List
         tuple: (adjacent_hexes, port_resource)
     """
     adjacent_hexes = []
-    
+
     # Get adjacent tile IDs from public_state.board.map.adjacent_tiles
     # adjacent_tiles: Dict[NodeId, Tuple[int, ...]] - node_id -> tile ids touching it
     adjacent_tile_ids = public_state.board.map.adjacent_tiles.get(node_id, ())
-    
+
     # Get tile information from public_state.board.map.tiles
     # tiles: Dict[int, Tuple[Optional[FastResource], Optional[int]]] - tile_id -> (resource, roll)
     tiles = public_state.board.map.tiles
-    
+
     for tile_id in adjacent_tile_ids:
         resource, roll = tiles.get(tile_id, (None, None))
-        
+
         if resource is not None:
             # This is a resource tile (not desert)
             resource_name = resource.name if hasattr(resource, 'name') else str(resource)
             pips = get_pip_count(roll)
-            
+
             adjacent_hexes.append(AdjacentHexInfo(
                 resource=resource_name,
                 roll=roll,
                 pips=pips,
                 tile_id=tile_id
             ))
-    
+
     # Check if this node is on a port
     # ports: Dict[int, Tuple[Optional[FastResource], Tuple[NodeId, NodeId]]] - port_id -> (resource, (node_a, node_b))
     port_resource = None
@@ -109,7 +109,7 @@ def get_adjacent_hex_info(public_state: PublicState, node_id: int) -> tuple[List
             else:
                 port_resource = resource.name if hasattr(resource, 'name') else str(resource)
             break
-    
+
     return adjacent_hexes, port_resource
 
 
@@ -130,7 +130,7 @@ def get_full_board_map(public_state: PublicState) -> str:
     # Extract tile information from public_state.board.map.tiles
     # tiles: Dict[int, Tuple[Optional[FastResource], Optional[int]]] - tile_id -> (resource, roll)
     tiles = public_state.board.map.tiles
-    
+
     # Build tile_id -> node_ids mapping by inverting adjacent_tiles
     # adjacent_tiles: Dict[NodeId, Tuple[int, ...]] - node_id -> tile ids touching it
     tile_to_nodes = {}
@@ -139,15 +139,15 @@ def get_full_board_map(public_state: PublicState) -> str:
             if tile_id not in tile_to_nodes:
                 tile_to_nodes[tile_id] = []
             tile_to_nodes[tile_id].append(node_id)
-    
+
     # Sort node IDs for each tile for deterministic output
     for tile_id in tile_to_nodes:
         tile_to_nodes[tile_id].sort()
-    
+
     # Sort tile IDs for deterministic output
     for tile_id in sorted(tiles.keys()):
         resource, roll = tiles[tile_id]
-        
+
         if resource is None:
             # Desert tile
             resource_pips_str = "DESERT"
@@ -160,7 +160,7 @@ def get_full_board_map(public_state: PublicState) -> str:
         # Get adjacent node IDs for this tile
         adjacent_node_ids = tile_to_nodes.get(tile_id, [])
         nodes_str = f"Nodes: {adjacent_node_ids}" if adjacent_node_ids else "Nodes: []"
-        
+
         lines.append(f"Tile {tile_id:>2}: {resource_pips_str}, {nodes_str}")
 
     return "\n".join(lines)
@@ -242,11 +242,11 @@ def calculate_blocked_production(robber_tile_id: int, players: List[PlayerBoardD
         Dict[str, str]: Dictionary mapping player colors to blocked production strings
     """
     blocked_production = {}
-    
+
     for player_data in players:
         blocked_pips = 0
         blocked_resource_pips = {"WOOD": 0, "BRICK": 0, "SHEEP": 0, "WHEAT": 0, "ORE": 0}
-        
+
         # Check each building to see if it's adjacent to the robber tile
         for building in player_data.settlements + player_data.cities:
             for hex_info in building.adjacent_hexes:
@@ -256,11 +256,11 @@ def calculate_blocked_production(robber_tile_id: int, players: List[PlayerBoardD
                     blocked_pips += hex_info.pips * multiplier
                     if hex_info.resource in blocked_resource_pips:
                         blocked_resource_pips[hex_info.resource] += hex_info.pips * multiplier
-        
+
         if blocked_pips > 0:
             blocked_str = f"{blocked_pips} pips"
             blocked_production[player_data.color] = blocked_str
-    
+
     return blocked_production
 
 
@@ -275,27 +275,27 @@ def format_robber_info(public_state: PublicState, players: List[PlayerBoardData]
         str: Formatted string representation of robber information
     """
     lines = []
-    
+
     # Get robber tile ID directly from public_state
     robber_tile_id = public_state.board.robber_tile_id
-    
+
     # Get tile information from public_state.board.map.tiles
     # tiles: Dict[int, Tuple[Optional[FastResource], Optional[int]]] - tile_id -> (resource, roll)
     robber_resource = None
     robber_roll = None
     robber_pips = 0
-    
+
     if robber_tile_id is not None and robber_tile_id in public_state.board.map.tiles:
         resource, roll = public_state.board.map.tiles[robber_tile_id]
         robber_resource = resource
         robber_roll = roll
         robber_pips = get_pip_count(roll)
-    
+
     # Calculate blocked production if we have a valid robber tile
     blocked_production = {}
     if robber_tile_id is not None:
         blocked_production = calculate_blocked_production(robber_tile_id, players)
-    
+
     # Format robber information
     if robber_tile_id is not None:
         if robber_resource is None:
@@ -303,9 +303,9 @@ def format_robber_info(public_state: PublicState, players: List[PlayerBoardData]
         else:
             resource_name = robber_resource.name if hasattr(robber_resource, 'name') else str(robber_resource)
             tile_info = f"Tile {robber_tile_id}: {robber_roll} {resource_name} ({robber_pips} pips)"
-        
+
         lines.append(f"ROBBER: Tile {robber_tile_id} - {tile_info}")
-        
+
         # Add blocked production information
         if blocked_production:
             for color, blocked_str in sorted(blocked_production.items()):
@@ -317,7 +317,7 @@ def format_robber_info(public_state: PublicState, players: List[PlayerBoardData]
         lines.append(f"ROBBER: Unknown position")
         lines.append(f"  * Tile info: Could not determine robber tile")
         lines.append(f"  * Blocking: None")
-    
+
     return "\n".join(lines)
 
 
@@ -507,11 +507,51 @@ def get_player_dev_cards(public_state: PublicState, current_player_color, curren
                 card_list.append(f"ROAD_BUILDING: {current_player_inventory.road_building}")
             if current_player_inventory.victory_point > 0:
                 card_list.append(f"VICTORY_POINT: {current_player_inventory.victory_point}")
-            lines.append(f"- {color_name}: {', '.join(card_list) if card_list else 'No dev cards'}")
+            
+            # Add played cards (public information)
+            played_list = []
+            if player_data.played_knight > 0:
+                played_list.append(f"KNIGHT: {player_data.played_knight}")
+            if player_data.played_year_of_plenty > 0:
+                played_list.append(f"YEAR_OF_PLENTY: {player_data.played_year_of_plenty}")
+            if player_data.played_monopoly > 0:
+                played_list.append(f"MONOPOLY: {player_data.played_monopoly}")
+            if player_data.played_road_building > 0:
+                played_list.append(f"ROAD_BUILDING: {player_data.played_road_building}")
+            if player_data.played_victory_point > 0:
+                played_list.append(f"VICTORY_POINT: {player_data.played_victory_point}")
+            
+            # Combine held and played cards
+            held_str = ', '.join(card_list) if card_list else 'No dev cards'
+            played_str = ', '.join(played_list) if played_list else None
+            
+            if played_str:
+                lines.append(f"- {color_name}: {held_str} (Played: {played_str})")
+            else:
+                lines.append(f"- {color_name}: {held_str}")
         else:
-            # For other players, only show public information (hand count)
+            # For other players, show played cards (public) and hidden count for held cards
             hand_count = player_data.hand_dev_count
-            lines.append(f"- {color_name}: {hand_count} dev cards (hidden)")
+            
+            # Add played cards (public information)
+            played_list = []
+            if player_data.played_knight > 0:
+                played_list.append(f"KNIGHT: {player_data.played_knight}")
+            if player_data.played_year_of_plenty > 0:
+                played_list.append(f"YEAR_OF_PLENTY: {player_data.played_year_of_plenty}")
+            if player_data.played_monopoly > 0:
+                played_list.append(f"MONOPOLY: {player_data.played_monopoly}")
+            if player_data.played_road_building > 0:
+                played_list.append(f"ROAD_BUILDING: {player_data.played_road_building}")
+            if player_data.played_victory_point > 0:
+                played_list.append(f"VICTORY_POINT: {player_data.played_victory_point}")
+            
+            played_str = ', '.join(played_list) if played_list else None
+            
+            if played_str:
+                lines.append(f"- {color_name}: {hand_count} dev cards (hidden) (Played: {played_str})")
+            else:
+                lines.append(f"- {color_name}: {hand_count} dev cards (hidden)")
 
     return "\n".join(lines)
 

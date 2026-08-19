@@ -25,6 +25,8 @@ from game_formatter import (
     calculate_blocked_production,
     get_full_board_map,
     get_pip_count,
+    get_player_resources,
+    get_player_dev_cards,
 )
 from catanatron.models.perspective_player import _build_public_state
 from catanatron.state_functions import player_key
@@ -1398,6 +1400,443 @@ def test_format_robber_info_exact_string_deterministic_game():
     expected = """ROBBER: Tile 0 - Tile 0: 11 SHEEP (2 pips)
   * Blocking BLUE: 2 pips
   * Blocking RED: 4 pips"""
+    
+    assert result == expected
+
+
+def create_public_player(**kwargs):
+    """Helper to create a PublicPlayer with sensible defaults.
+    
+    Only specify the parameters you want to override from defaults.
+    """
+    from catanatron.models.public_state import PublicPlayer
+    
+    defaults = {
+        'public_vps': 0,
+        'has_army': False,
+        'has_road': False,
+        'longest_road_length': 0,
+        'roads_left': 15,
+        'settlements_left': 5,
+        'cities_left': 4,
+        'has_rolled': False,
+        'hand_resource_count': 0,
+        'hand_dev_count': 0,
+        'played_knight': 0,
+        'played_monopoly': 0,
+        'played_road_building': 0,
+        'played_year_of_plenty': 0,
+        'played_victory_point': 0
+    }
+    
+    # Update defaults with provided kwargs
+    defaults.update(kwargs)
+    
+    return PublicPlayer(**defaults)
+
+
+def create_public_map(**kwargs):
+    """Helper to create a PublicMap with sensible defaults.
+    
+    Only specify the parameters you want to override from defaults.
+    """
+    from catanatron.models.public_state import PublicMap
+    
+    defaults = {
+        'tiles': {},
+        'tile_coordinates': {},
+        'ports': {},
+        'adjacent_tiles': {},
+        'land_nodes': frozenset()
+    }
+    
+    # Update defaults with provided kwargs
+    defaults.update(kwargs)
+    
+    return PublicMap(**defaults)
+
+
+def create_public_board(**kwargs):
+    """Helper to create a PublicBoard with sensible defaults.
+    
+    Only specify the parameters you want to override from defaults.
+    """
+    from catanatron.models.public_state import PublicBoard
+    
+    defaults = {
+        'buildings': {},
+        'roads': {},
+        'robber_tile_id': 0,
+        'longest_road_color': None,
+        'longest_road_length': 0,
+        'map': create_public_map()
+    }
+    
+    # Update defaults with provided kwargs
+    defaults.update(kwargs)
+    
+    return PublicBoard(**defaults)
+
+
+def create_public_state(players, **kwargs):
+    """Helper to create a PublicState with sensible defaults.
+    
+    Args:
+        players: Dict of Color to PublicPlayer
+        **kwargs: Optional overrides for board and other parameters
+    
+    Only specify the parameters you want to override from defaults.
+    """
+    from catanatron.models.public_state import PublicState
+    
+    defaults = {
+        'board': create_public_board(),
+        'players': players
+    }
+    
+    # Update defaults with provided kwargs
+    defaults.update(kwargs)
+    
+    return PublicState(**defaults)
+
+
+def create_inventory(**kwargs):
+    """Helper to create an Inventory with sensible defaults.
+    
+    Only specify the parameters you want to override from defaults.
+    """
+    from catanatron.models.inventory import Inventory
+    
+    defaults = {
+        'wood': 0,
+        'brick': 0,
+        'sheep': 0,
+        'wheat': 0,
+        'ore': 0,
+        'knight': 0,
+        'year_of_plenty': 0,
+        'monopoly': 0,
+        'road_building': 0,
+        'victory_point': 0,
+        'actual_vps': 0,
+        'has_played_development_card': False
+    }
+    
+    # Update defaults with provided kwargs
+    defaults.update(kwargs)
+    
+    return Inventory(**defaults)
+
+
+def create_mock_public_state():
+    """Create a mock public state for testing resource and dev card formatting"""
+    from catanatron.models.player import Color
+    
+    # Create mock public players using helper
+    red_player = create_public_player(
+        public_vps=5,
+        longest_road_length=3,
+        roads_left=13,
+        settlements_left=4,
+        hand_resource_count=3,
+        hand_dev_count=2,
+        played_knight=1,
+        played_year_of_plenty=1
+    )
+    
+    blue_player = create_public_player(
+        public_vps=4,
+        longest_road_length=2,
+        roads_left=14,
+        settlements_left=4,
+        hand_resource_count=5,
+        hand_dev_count=1,
+        played_knight=2,
+        played_road_building=1
+    )
+    
+    orange_player = create_public_player(
+        public_vps=3,
+        longest_road_length=1,
+        roads_left=14,
+        settlements_left=5
+    )
+    
+    white_player = create_public_player(
+        public_vps=2,
+        roads_left=15,
+        settlements_left=5,
+        hand_resource_count=1,
+        hand_dev_count=3,
+        played_monopoly=1,
+        played_victory_point=1
+    )
+    
+    # Create public state using helper
+    return create_public_state({
+        Color.RED: red_player,
+        Color.BLUE: blue_player,
+        Color.ORANGE: orange_player,
+        Color.WHITE: white_player
+    })
+
+
+def test_get_player_resources_with_inventory():
+    """Test get_player_resources with current player inventory provided"""
+    public_state = create_mock_public_state()
+    current_player_color = Color.RED
+    
+    # Create inventory for current player using helper
+    inventory = create_inventory(
+        wood=2,
+        brick=1,
+        sheep=3,
+        wheat=0,
+        ore=1,
+        actual_vps=5
+    )
+    
+    result = get_player_resources(public_state, current_player_color, inventory)
+    
+    expected = """[PLAYER RESOURCES]
+- RED: WOOD: 2, BRICK: 1, SHEEP: 3, ORE: 1
+- BLUE: 5 resource cards (hidden)
+- ORANGE: 0 resource cards (hidden)
+- WHITE: 1 resource cards (hidden)"""
+    
+    assert result == expected
+
+
+def test_get_player_resources_without_inventory():
+    """Test get_player_resources without current player inventory (all public info)"""
+    public_state = create_mock_public_state()
+    current_player_color = Color.RED
+    
+    result = get_player_resources(public_state, current_player_color, None)
+    
+    expected = """[PLAYER RESOURCES]
+- RED: 3 resource cards (hidden)
+- BLUE: 5 resource cards (hidden)
+- ORANGE: 0 resource cards (hidden)
+- WHITE: 1 resource cards (hidden)"""
+    
+    assert result == expected
+
+
+def test_get_player_resources_empty_inventory():
+    """Test get_player_resources with empty inventory for current player"""
+    public_state = create_mock_public_state()
+    current_player_color = Color.RED
+    
+    # Create empty inventory using helper
+    inventory = create_inventory(actual_vps=5)
+    
+    result = get_player_resources(public_state, current_player_color, inventory)
+    
+    expected = """[PLAYER RESOURCES]
+- RED: No resources
+- BLUE: 5 resource cards (hidden)
+- ORANGE: 0 resource cards (hidden)
+- WHITE: 1 resource cards (hidden)"""
+    
+    assert result == expected
+
+
+def test_get_player_resources_all_resource_types():
+    """Test get_player_resources with all resource types present"""
+    public_state = create_mock_public_state()
+    current_player_color = Color.BLUE
+    
+    # Create inventory with all resource types using helper
+    inventory = create_inventory(
+        wood=1,
+        brick=2,
+        sheep=3,
+        wheat=4,
+        ore=5,
+        actual_vps=4
+    )
+    
+    result = get_player_resources(public_state, current_player_color, inventory)
+    
+    expected = """[PLAYER RESOURCES]
+- RED: 3 resource cards (hidden)
+- BLUE: WOOD: 1, BRICK: 2, SHEEP: 3, WHEAT: 4, ORE: 5
+- ORANGE: 0 resource cards (hidden)
+- WHITE: 1 resource cards (hidden)"""
+    
+    assert result == expected
+
+
+def test_get_player_dev_cards_with_inventory():
+    """Test get_player_dev_cards with current player inventory provided"""
+    public_state = create_mock_public_state()
+    current_player_color = Color.RED
+    
+    # Create inventory for current player using helper
+    inventory = create_inventory(
+        knight=2,
+        year_of_plenty=1,
+        victory_point=1,
+        actual_vps=5
+    )
+    
+    result = get_player_dev_cards(public_state, current_player_color, inventory)
+    
+    expected = """[PLAYER DEVELOPMENT CARDS]
+- RED: KNIGHT: 2, YEAR_OF_PLENTY: 1, VICTORY_POINT: 1 (Played: KNIGHT: 1, YEAR_OF_PLENTY: 1)
+- BLUE: 1 dev cards (hidden) (Played: KNIGHT: 2, ROAD_BUILDING: 1)
+- ORANGE: 0 dev cards (hidden)
+- WHITE: 3 dev cards (hidden) (Played: MONOPOLY: 1, VICTORY_POINT: 1)"""
+    
+    assert result == expected
+
+
+def test_get_player_dev_cards_without_inventory():
+    """Test get_player_dev_cards without current player inventory (all public info)"""
+    public_state = create_mock_public_state()
+    current_player_color = Color.RED
+    
+    result = get_player_dev_cards(public_state, current_player_color, None)
+    
+    expected = """[PLAYER DEVELOPMENT CARDS]
+- RED: 2 dev cards (hidden) (Played: KNIGHT: 1, YEAR_OF_PLENTY: 1)
+- BLUE: 1 dev cards (hidden) (Played: KNIGHT: 2, ROAD_BUILDING: 1)
+- ORANGE: 0 dev cards (hidden)
+- WHITE: 3 dev cards (hidden) (Played: MONOPOLY: 1, VICTORY_POINT: 1)"""
+    
+    assert result == expected
+
+
+def test_get_player_dev_cards_empty_inventory():
+    """Test get_player_dev_cards with empty inventory for current player"""
+    public_state = create_mock_public_state()
+    current_player_color = Color.RED
+    
+    # Create empty inventory using helper
+    inventory = create_inventory(actual_vps=5)
+    
+    result = get_player_dev_cards(public_state, current_player_color, inventory)
+    
+    expected = """[PLAYER DEVELOPMENT CARDS]
+- RED: No dev cards (Played: KNIGHT: 1, YEAR_OF_PLENTY: 1)
+- BLUE: 1 dev cards (hidden) (Played: KNIGHT: 2, ROAD_BUILDING: 1)
+- ORANGE: 0 dev cards (hidden)
+- WHITE: 3 dev cards (hidden) (Played: MONOPOLY: 1, VICTORY_POINT: 1)"""
+    
+    assert result == expected
+
+
+def test_get_player_dev_cards_all_card_types():
+    """Test get_player_dev_cards with all development card types present"""
+    public_state = create_mock_public_state()
+    current_player_color = Color.WHITE
+    
+    # Create inventory with all dev card types using helper
+    inventory = create_inventory(
+        knight=3,
+        year_of_plenty=2,
+        monopoly=1,
+        road_building=1,
+        victory_point=2,
+        actual_vps=2
+    )
+    
+    result = get_player_dev_cards(public_state, current_player_color, inventory)
+    
+    expected = """[PLAYER DEVELOPMENT CARDS]
+- RED: 2 dev cards (hidden) (Played: KNIGHT: 1, YEAR_OF_PLENTY: 1)
+- BLUE: 1 dev cards (hidden) (Played: KNIGHT: 2, ROAD_BUILDING: 1)
+- ORANGE: 0 dev cards (hidden)
+- WHITE: KNIGHT: 3, YEAR_OF_PLENTY: 2, MONOPOLY: 1, ROAD_BUILDING: 1, VICTORY_POINT: 2 (Played: MONOPOLY: 1, VICTORY_POINT: 1)"""
+    
+    assert result == expected
+
+
+def test_get_player_dev_cards_only_knights():
+    """Test get_player_dev_cards with only knight cards"""
+    public_state = create_mock_public_state()
+    current_player_color = Color.BLUE
+    
+    # Create inventory with only knights using helper
+    inventory = create_inventory(
+        knight=5,
+        actual_vps=4
+    )
+    
+    result = get_player_dev_cards(public_state, current_player_color, inventory)
+    
+    expected = """[PLAYER DEVELOPMENT CARDS]
+- RED: 2 dev cards (hidden) (Played: KNIGHT: 1, YEAR_OF_PLENTY: 1)
+- BLUE: KNIGHT: 5 (Played: KNIGHT: 2, ROAD_BUILDING: 1)
+- ORANGE: 0 dev cards (hidden)
+- WHITE: 3 dev cards (hidden) (Played: MONOPOLY: 1, VICTORY_POINT: 1)"""
+    
+    assert result == expected
+
+
+def test_get_player_dev_cards_no_played_cards():
+    """Test get_player_dev_cards when no cards have been played"""
+    from catanatron.models.player import Color
+    
+    # Create players with no played cards using helper
+    red_player = create_public_player(
+        public_vps=5,
+        longest_road_length=3,
+        roads_left=13,
+        settlements_left=4,
+        hand_resource_count=3,
+        hand_dev_count=2
+    )
+    
+    blue_player = create_public_player(
+        public_vps=4,
+        longest_road_length=2,
+        roads_left=14,
+        settlements_left=4,
+        hand_resource_count=5,
+        hand_dev_count=1
+    )
+    
+    orange_player = create_public_player(
+        public_vps=3,
+        longest_road_length=1,
+        roads_left=14,
+        settlements_left=5
+    )
+    
+    white_player = create_public_player(
+        public_vps=2,
+        roads_left=15,
+        settlements_left=5,
+        hand_resource_count=1,
+        hand_dev_count=3
+    )
+    
+    # Create public state using helper
+    public_state = create_public_state({
+        Color.RED: red_player,
+        Color.BLUE: blue_player,
+        Color.ORANGE: orange_player,
+        Color.WHITE: white_player
+    })
+    
+    current_player_color = Color.RED
+    
+    # Create inventory for current player using helper
+    inventory = create_inventory(
+        knight=2,
+        year_of_plenty=1,
+        actual_vps=5
+    )
+    
+    result = get_player_dev_cards(public_state, current_player_color, inventory)
+    
+    expected = """[PLAYER DEVELOPMENT CARDS]
+- RED: KNIGHT: 2, YEAR_OF_PLENTY: 1
+- BLUE: 1 dev cards (hidden)
+- ORANGE: 0 dev cards (hidden)
+- WHITE: 3 dev cards (hidden)"""
     
     assert result == expected
 
