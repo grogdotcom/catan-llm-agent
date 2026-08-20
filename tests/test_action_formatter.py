@@ -194,8 +194,11 @@ def test_build_moves_bundles_initial_settlement_with_concrete_roads():
         node = move.actions[0].value
         assert node in road  # the road must attach to the settlement
         assert " -> build road " in move.label
-        # Sorted (n1, n2) node-pair representation.
-        assert move.label.endswith(f"({road[0]}, {road[1]})")
+        # Sorted (n1, n2) node-pair representation (now enriched with tile detail).
+        assert f"({road[0]}, {road[1]})" in move.label
+        # Enriched settlement detail should contain Tile info and pips
+        assert "Tile" in move.label and "pips" in move.label
+        assert "Total:" in move.label
 
 
 def test_build_moves_bundles_road_building_with_concrete_road_pairs():
@@ -282,10 +285,11 @@ def test_road_building_bundles_dedupe_disconnected_pairs():
     )
     assert cross
 
-    # Labels use the sorted node-pair representation.
+    # Labels use the sorted node-pair representation (now enriched with per-road tile detail).
     for move in two_road[:2]:
         road_a, road_b = sorted((tuple(sorted(move.actions[1].value)), tuple(sorted(move.actions[2].value))))
-        assert move.label.endswith(f"({road_a[0]}, {road_a[1]}) and ({road_b[0]}, {road_b[1]})")
+        assert f"({road_a[0]}, {road_a[1]}) and ({road_b[0]}, {road_b[1]})" in move.label
+        assert "road" in move.label.lower() and "pips" in move.label
 
 
 

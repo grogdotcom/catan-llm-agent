@@ -1123,6 +1123,386 @@ def _node_pip_total(public_state: Optional[PublicState], node_id: int) -> int:
     return total
 
 
+def _describe_node(public_state: Optional[PublicState], node_id: int) -> str:
+    """Concise node description with adjacent tiles, port and total pips.
+
+    Mirrors ``_format_building_string`` / ``get_adjacent_hex_info`` so the
+    tile strings are identical to board-occupancy formatting. Returns e.g.
+    ``Node 5: (Tile 0: 11 SHEEP (2 pips), Tile 4: 5 WHEAT (4 pips)) Port: 3:1 Total: 6 pips``.
+    """
+    if public_state is None:
+        return f"Node {node_id}"
+    adjacent_hexes, port = get_adjacent_hex_info(public_state, node_id)
+    hex_info_list = []
+    for hx in adjacent_hexes:
+        hex_info_list.append(f"(Tile {hx.tile_id}: {hx.roll} {hx.resource} ({hx.pips} pips))")
+    hex_str = ", ".join(hex_info_list) if hex_info_list else "(no resource tiles)"
+    port_str = f" Port: {port}" if port else ""
+    total = sum(h.pips for h in adjacent_hexes)
+    return f"Node {node_id}: {hex_str}{port_str} Total: {total} pips"
+
+
+def _is_buildable_node(public_state: Optional[PublicState], node_id: int) -> bool:
+    """Whether a settlement could be placed at ``node_id`` (empty + distance rule).
+
+    Mirrors the engine's ``Board.board_buildable_ids`` distance rule without
+    requiring the full State: node must be unoccupied, be a land node, and
+    have no neighboring building.
+    """
+    if public_state is None:
+        return False
+    if node_id in public_state.board.buildings:
+        return False
+    if node_id not in public_state.board.map.land_nodes:
+        return False
+    # Distance rule: no adjacent node may have a building
+    for neighbor in STATIC_GRAPH.neighbors(node_id):
+        if neighbor in public_state.board.buildings:
+            return False
+    return True
+
+
+def _node_buildability_detail(
+    public_state: Optional[PublicState],
+    node_id: int,
+    extra_occupied: Optional[Set[int]] = None,
+    extra_occupied_color: Any = None,
+) -> tuple[bool, str]:
+    """Return (is_buildable, reason) for settlement placement at node.
+
+    Mirrors _is_buildable_node but provides human reason for blocked status.
+    ``extra_occupied`` models buildings that will exist after the current move
+    (e.g., the settlement being placed at node 0), so immediate neighbours are
+    correctly reported as ``too close``.
+    """
+    if public_state is None:
+        return False, "unknown"
+    if node_id not in public_state.board.map.land_nodes:
+        return False, "blocked (water/non-land)"
+    building = public_state.board.buildings.get(node_id)
+    if building is not None:
+        owner, btype = building
+        btype_name = getattr(btype, "name", str(btype)).lower()
+        return False, f"blocked (occupied by {_name_of(owner)} {btype_name} at Node {node_id})"
+    if extra_occupied is not None and node_id in extra_occupied:
+        # The node itself will be occupied by the pending settlement
+        owner_name = _name_of(extra_occupied_color) if extra_occupied_color is not None else "you"
+        return False, f"blocked (will be occupied by {owner_name} settlement at Node {node_id})"
+    for neighbor in STATIC_GRAPH.neighbors(node_id):
+        nb_building = public_state.board.buildings.get(neighbor)
+        if nb_building is not None:
+            owner, btype = nb_building
+            btype_name = getattr(btype, "name", str(btype)).lower()
+            return False, f"blocked (too close to {_name_of(owner)} {btype_name} at Node {neighbor})"
+        if extra_occupied is not None and neighbor in extra_occupied:
+            owner_name = _name_of(extra_occupied_color) if extra_occupied_color is not None else "you"
+            return False, f"blocked (too close to {owner_name} settlement at Node {neighbor})"
+    return True, "available"
+
+
+def _player_longest_road_length(
+    public_state: Optional[PublicState],
+    color: Any,
+    extra_edges: Optional[Sequence[Tuple[int, int]]] = None,
+) -> int:
+    """Projected longest road length for ``color`` after optionally adding ``extra_edges``.
+
+    Mirrors ``Board.longest_acyclic_path`` over the friendly road graph, blocking
+    traversal through enemy settlements/cities (same rule the engine uses). The
+    result is the number of road segments in the longest simple path, matching
+    ``Board.road_lengths[color]`` and the 5-road threshold for Longest Road.
+
+    Args:
+        public_state: Public board snapshot.
+        color: Player to evaluate.
+        extra_edges: Optional road edges to add for projection (each as
+            ``(n1, n2)`` unsorted). Both directions are treated as owned.
+
+    Returns:
+        Length as number of edges (0 if no roads).
+    """
+    if public_state is None or color is None:
+        return 0
+    # Friendly edge set (normalized)
+    friendly: Set[Tuple[int, int]] = set()
+    for edge, owner in public_state.board.roads.items():
+        if owner == color:
+            friendly.add(tuple(sorted(edge)))
+    if extra_edges:
+        for e in extra_edges:
+            friendly.add(tuple(sorted(e)))
+    if not friendly:
+        return 0
+    # Enemy-occupied nodes block traversal
+    enemy_nodes: Set[int] = {
+        n for n, (owner, _) in public_state.board.buildings.items() if owner != color
+    }
+    # Nodes incident to friendly roads
+    nodes: Set[int] = set()
+    for a, b in friendly:
+        nodes.add(a)
+        nodes.add(b)
+
+    best = 0
+    # Iterative DFS per start node, tracking edge path only (nodes may be revisited
+    # via different edges, matching the engine's edge-based visited set).
+    for start in nodes:
+        if start in enemy_nodes:
+            continue
+        stack: List[Tuple[int, List[Tuple[int, int]]]] = [(start, [])]
+        # To avoid exponential blowup on dense boards, cap visited path length?
+        # Longest road in Catan rarely exceeds 15, so exhaustive DFS is fine.
+        while stack:
+            node, path = stack.pop()
+            if node in enemy_nodes:
+                best = max(best, len(path))
+                continue
+            expanded = False
+            for nb in STATIC_GRAPH.neighbors(node):
+                edge = tuple(sorted((node, nb)))
+                if edge not in friendly:
+                    continue
+                if edge in path:
+                    continue
+                if nb in enemy_nodes:
+                    # Engine skips edge into enemy settlement entirely
+                    continue
+                stack.append((nb, path + [edge]))
+                expanded = True
+            if not expanded:
+                best = max(best, len(path))
+    return best
+
+
+def _longest_road_suffix(
+    public_state: Optional[PublicState],
+    color: Any,
+    extra_edges: Sequence[Tuple[int, int]],
+) -> str:
+    """Human suffix describing longest-road change for a road build.
+
+    Shows ``current -> projected (+delta)`` and whether the move would
+    claim/extend Longest Road (≥5 and beats the global holder).
+
+    Returns:
+        Suffix like ``" | Longest road: 2 -> 4 (+2)"`` or
+        ``" | Longest road: 4 -> 6 (+2, would claim Longest Road, +2 VP)"``.
+        Empty string if state/color unavailable.
+    """
+    if public_state is None or color is None:
+        return ""
+    current = _player_longest_road_length(public_state, color, None)
+    projected = _player_longest_road_length(public_state, color, extra_edges)
+    delta = projected - current
+    # Base fragment
+    if delta == 0:
+        # Still inform current length; useful to see no growth (e.g., closing a loop)
+        base = f" | Longest road: {current} -> {projected} (no change)"
+    elif delta > 0:
+        base = f" | Longest road: {current} -> {projected} (+{delta})"
+    else:
+        base = f" | Longest road: {current} -> {projected} ({delta})"
+
+    # Longest Road bonus hint (5+ roads and strictly longer than current holder)
+    try:
+        global_len = getattr(public_state.board, "longest_road_length", 0) or 0
+        holder = getattr(public_state.board, "longest_road_color", None)
+    except Exception:
+        global_len, holder = 0, None
+
+    would_claim = False
+    if projected >= 5 and projected > global_len:
+        # If holder is the same color, extending still counts as holding, but
+        # the interesting case is taking/retaining with a new longer length.
+        # Show the hint whenever the player would be the holder after the move.
+        if holder is None or holder != color or projected > global_len:
+            would_claim = True
+
+    if would_claim:
+        if holder == color:
+            base += " [would extend Longest Road]"
+        else:
+            base += " [would claim Longest Road, +2 VP]"
+        if projected < 5:
+            # Not actually claimable yet, but keep hint subtle
+            base += " (needs 5)"
+    elif projected >= 5 and holder == color and projected == global_len:
+        base += " [holds Longest Road]"
+
+    return base
+
+
+def _tile_id_for_coordinate(public_state: Optional[PublicState], coordinate) -> Optional[int]:
+    """Reverse lookup coordinate -> tile_id via public map."""
+    if public_state is None or coordinate is None:
+        return None
+    for tile_id, coord in public_state.board.map.tile_coordinates.items():
+        if coord == coordinate:
+            return tile_id
+    return None
+
+
+def _robber_tile_detail(public_state: Optional[PublicState], coordinate) -> str:
+    """Rich robber tile detail: tile resource/roll/pips + occupants + card counts.
+
+    Returns e.g. ``Tile 7: 8 ORE (5 pips) | Occupants: RED city at Node 10 (10 pips, 4 cards), BLUE settlement at Node 11 (5 pips, 2 cards)``.
+    """
+    if public_state is None or coordinate is None:
+        return _coordinate_tile_label(public_state, coordinate)
+    tile_id = _tile_id_for_coordinate(public_state, coordinate)
+    if tile_id is None:
+        return _format_coordinate(coordinate)
+    resource, roll = public_state.board.map.tiles.get(tile_id, (None, None))
+    if resource is None:
+        tile_str = f"Tile {tile_id}: DESERT"
+        pips = 0
+    else:
+        resource_name = resource.name if hasattr(resource, 'name') else str(resource)
+        pips = get_pip_count(roll)
+        tile_str = f"Tile {tile_id}: {roll} {resource_name} ({pips} pips)"
+
+    # Occupants on this tile
+    tiles_to_nodes: Dict[int, List[int]] = defaultdict(list)
+    for nid, tids in public_state.board.map.adjacent_tiles.items():
+        for tid in tids:
+            tiles_to_nodes[tid].append(nid)
+    occupants: Dict[Any, List[Tuple[int, str, int]]] = defaultdict(list)  # color -> list of (node, type, pips_blocked)
+    for node_id in tiles_to_nodes.get(tile_id, []):
+        building = public_state.board.buildings.get(node_id)
+        if building is None:
+            continue
+        owner, btype = building
+        btype_name = btype.name if hasattr(btype, 'name') else str(btype)
+        multiplier = 2 if btype_name == "CITY" else 1
+        blocked = pips * multiplier if resource is not None else 0
+        occupants[owner].append((node_id, btype_name, blocked))
+
+    if not occupants:
+        return f"{tile_str} | No occupants"
+
+    parts = []
+    for owner in sorted(occupants.keys(), key=lambda c: getattr(c, "name", str(c))):
+        color_name = _name_of(owner)
+        hand_cards = public_state.players.get(owner)
+        card_count = getattr(hand_cards, "hand_resource_count", "?") if hand_cards is not None else "?"
+        # sum pips for this owner on this tile
+        total_blocked = sum(bp for _, _, bp in occupants[owner])
+        nodes_desc = ", ".join(
+            f"{btype.lower()} at Node {nid} ({bp} pips)" for nid, btype, bp in sorted(occupants[owner])
+        )
+        parts.append(f"{color_name}: {nodes_desc} | {total_blocked} pips blocked, {card_count} cards")
+    occupants_str = "; ".join(parts)
+    return f"{tile_str} | Occupants: {occupants_str}"
+
+
+def _road_node_detail(
+    public_state: Optional[PublicState],
+    edge: Tuple[int, int],
+    exclude_nodes: Optional[Set[int]] = None,
+    network_nodes: Optional[Set[int]] = None,
+    extra_occupied: Optional[Set[int]] = None,
+    extra_occupied_color: Any = None,
+) -> str:
+    """Describe settlement opportunities reachable via ``edge``.
+
+    A road touches exactly one *new* node (the tip) and from that tip two
+    further nodes are one road-length away. This mirrors the board geometry:
+    interior nodes have degree 3, so from the tip there are two forward
+    extensions. Both the direct tip and the two forward nodes are shown with
+    full tile/port/pip detail and an explicit availability tag
+    (``available`` vs ``blocked (occupied ...)`` / ``blocked (too close ...)``).
+
+    Args:
+        public_state: Public game state for tile/port lookups.
+        edge: Sorted ``(n1, n2)`` road edge.
+        exclude_nodes: Nodes to exclude from display (e.g., the settlement node
+            of an initial-placement ``settlement -> road`` bundle, which will be
+            occupied).
+        network_nodes: Player's current road/settlement network. If provided,
+            the *new* tip is the endpoint not in this network; otherwise the
+            tip is inferred as the endpoint(s) not in ``exclude_nodes``. This
+            keeps labels deterministic for roads that close a loop.
+        extra_occupied: Nodes that will be occupied after the current move
+            (e.g., the settlement at node 0 for initial placement). These are
+            treated as occupied for distance-rule checks, so immediate neighbours
+            of the new settlement are correctly reported as blocked.
+
+    Returns:
+        Suffix like ``" | reaches Node 5: ... [available] | extends toward
+        Node 10: ... [blocked (...)] , Node 11: ... [available]"``.
+    """
+    if public_state is None:
+        return ""
+    a, b = tuple(sorted(edge))
+    exclude = set(exclude_nodes or [])
+
+    # Determine the "new" tip(s) of the road.
+    if network_nodes is not None:
+        new_tips = [n for n in (a, b) if n not in network_nodes and n not in exclude]
+        # If both endpoints are already in the network (closing a loop) or both
+        # are new (should not happen for legal moves), fall back to any
+        # non-excluded endpoint so we still describe something.
+        if not new_tips:
+            new_tips = [n for n in (a, b) if n not in exclude]
+            # If still empty (edge == excluded), nothing to describe.
+            if not new_tips:
+                return ""
+        # Legal placements extend by one tip at a time; show the first new tip
+        # deterministically (sorted) to avoid 4-node blowup and match user's
+        # "1 new node + 2 forward" expectation.
+        new_tips = sorted(new_tips)
+        # If two new tips (rare), we describe both tips but cap extensions to
+        # two per tip; total then is 2 direct + up to 4 extended. Prefer to
+        # describe only the first tip to keep labels compact.
+        if len(new_tips) > 1:
+            new_tips = new_tips[:1]
+    else:
+        # No network context: treat the first non-excluded endpoint as the tip
+        # (setup settlement case where settlement node is excluded).
+        candidates = [n for n in (a, b) if n not in exclude]
+        if not candidates:
+            return ""
+        new_tips = sorted(candidates)[:1]
+
+    segments: List[str] = []
+    # Collect forward nodes for the tip(s)
+    for tip in new_tips:
+        is_ok, reason = _node_buildability_detail(
+            public_state, tip, extra_occupied=extra_occupied, extra_occupied_color=extra_occupied_color
+        )
+        segments.append(f"reaches {_describe_node(public_state, tip)} [{reason}]")
+        # If the tip itself is already developed (has a settlement/city, or
+        # will have one from the current move), no further extension is useful
+        # — the network cannot grow past an occupied node.
+        tip_occupied = (public_state.board.buildings.get(tip) is not None) or (
+            extra_occupied is not None and tip in extra_occupied
+        )
+        if tip_occupied:
+            continue
+        # Forward extensions from the tip, excluding the edge itself and any
+        # excluded nodes. Degree-3 interior => exactly 2 forward nodes.
+        forward = []
+        for nb in STATIC_GRAPH.neighbors(tip):
+            if nb in (a, b):
+                continue
+            if nb in exclude:
+                continue
+            forward.append(nb)
+        forward = sorted(forward)
+        if forward:
+            fwd_parts = []
+            for fwd in forward:
+                ok, rsn = _node_buildability_detail(
+                    public_state, fwd, extra_occupied=extra_occupied, extra_occupied_color=extra_occupied_color
+                )
+                fwd_parts.append(f"{_describe_node(public_state, fwd)} [{rsn}]")
+            segments.append(f"extends toward {', '.join(fwd_parts)}")
+
+    if not segments:
+        return " | no buildable settlement spots nearby"
+    return " | " + " | ".join(segments)
+
+
 def _format_coordinate(coordinate) -> str:
     """Render a cube coordinate as a compact string."""
     if coordinate is None:
@@ -1152,10 +1532,26 @@ def _label_action(action: Action, public_state: Optional[PublicState] = None) ->
     if kind == ActionType.END_TURN:
         return "End turn"
     if kind == ActionType.BUILD_ROAD:
-        return f"Build road on edge {tuple(sorted(value))}"
+        edge = tuple(sorted(value))
+        if public_state is not None:
+            color = getattr(action, "color", None)
+            network = None
+            try:
+                if color is not None:
+                    network = _own_network_nodes(public_state, color)
+            except Exception:
+                network = None
+            detail = _road_node_detail(public_state, edge, network_nodes=network)
+            longest = _longest_road_suffix(public_state, color, [edge])
+            return f"Build road on edge {edge}{detail}{longest}"
+        return f"Build road on edge {edge}"
     if kind == ActionType.BUILD_SETTLEMENT:
+        if public_state is not None:
+            return f"Build settlement at {_describe_node(public_state, value)}"
         return f"Build settlement at node {value}"
     if kind == ActionType.BUILD_CITY:
+        if public_state is not None:
+            return f"Build city at {_describe_node(public_state, value)}"
         return f"Build city at node {value}"
     if kind == ActionType.BUY_DEVELOPMENT_CARD:
         return "Buy a development card"
@@ -1170,6 +1566,11 @@ def _label_action(action: Action, public_state: Optional[PublicState] = None) ->
         return "Play Road Building (then build two roads)"
     if kind == ActionType.MOVE_ROBBER:
         coordinate, victim = value
+        if public_state is not None:
+            tile_detail = _robber_tile_detail(public_state, coordinate)
+            if victim is None:
+                return f"Move robber to {tile_detail} (no steal)"
+            return f"Move robber to {tile_detail} and steal from {_name_of(victim)}"
         coord_str = _coordinate_tile_label(public_state, coordinate)
         if victim is None:
             return f"Move robber to {coord_str} (no steal)"
@@ -1243,11 +1644,11 @@ def _knight_moves(knight_action: Action, public_state: PublicState) -> List[Move
     moves = []
     for coordinate, victim in _knight_robber_followups(public_state, color):
         followup = Action(color, ActionType.MOVE_ROBBER, (coordinate, victim))
-        tile_str = _coordinate_tile_label(public_state, coordinate)
+        tile_detail = _robber_tile_detail(public_state, coordinate)
         if victim is None:
-            label = f"Play Knight -> move robber to {tile_str} (no steal)"
+            label = f"Play Knight -> move robber to {tile_detail} (no steal)"
         else:
-            label = f"Play Knight -> move robber to {tile_str} and steal from {_name_of(victim)}"
+            label = f"Play Knight -> move robber to {tile_detail} and steal from {_name_of(victim)}"
         moves.append(Move(label=label, actions=[knight_action, followup]))
     return moves
 
@@ -1299,7 +1700,9 @@ def _road_building_moves(play_card: Action, public_state: PublicState) -> List[M
     Emits one move per unordered pair of roads, so building two disconnected
     edges "first" in either order is a single move (the resulting board is
     identical). Roads are shown as sorted ``(n1, n2)`` node pairs. When only a
-    single road is possible the bundle has just one road.
+    single road is possible the bundle has just one road. Each road is
+    annotated with reachable settlement spots (direct + one-away) so the LLM
+    can judge expansion value.
     """
     color = play_card.color
     base_network = _own_network_nodes(public_state, color)
@@ -1315,7 +1718,9 @@ def _road_building_moves(play_card: Action, public_state: PublicState) -> List[M
             if e != first
         ]
         if not seconds:
-            label = f"Play Road Building -> build road {first}"
+            detail = _road_node_detail(public_state, first, network_nodes=base_network)
+            longest = _longest_road_suffix(public_state, color, [first])
+            label = f"Play Road Building -> build road {first}{detail}{longest}"
             moves.append(
                 Move(
                     label=label,
@@ -1329,7 +1734,13 @@ def _road_building_moves(play_card: Action, public_state: PublicState) -> List[M
                     continue  # the reverse order is the same move
                 seen_pairs.add(pair)
                 road_a, road_b = sorted((first, second))
-                label = f"Play Road Building -> build roads {road_a} and {road_b}"
+                detail_a = _road_node_detail(public_state, first, network_nodes=base_network)
+                # Second road is placed after first, so its network includes first
+                second_network_for_detail = base_network | set(first)
+                detail_b = _road_node_detail(public_state, second, network_nodes=second_network_for_detail)
+                longest = _longest_road_suffix(public_state, color, [first, second])
+                # Keep the sorted-road pair prefix stable, then annotate each road
+                label = f"Play Road Building -> build roads {road_a} and {road_b} | road {first}{detail_a} | road {second}{detail_b}{longest}"
                 moves.append(
                     Move(
                         label=label,
@@ -1348,6 +1759,8 @@ def _setup_settlement_moves(settle: Action, public_state: PublicState) -> List[M
 
     Each settlement node is bundled with every legal road edge incident to it,
     so the LLM chooses the road as part of the same initial-placement move.
+    Labels include rich node/edge context: settlement tile/port/pips and road
+    expansion potential.
     """
     color = settle.color
     node = settle.value
@@ -1355,9 +1768,10 @@ def _setup_settlement_moves(settle: Action, public_state: PublicState) -> List[M
     if not road_options:
         # Degenerate safety net: no road is legal from this node.
         return [Move(label=_label_action(settle, public_state), actions=[settle])]
+    settle_desc = _describe_node(public_state, node)
     return [
         Move(
-            label=f"Build settlement at node {node} -> build road {edge}",
+            label=f"Build settlement at {settle_desc} -> build road {edge}{_road_node_detail(public_state, edge, exclude_nodes={node}, network_nodes={node}, extra_occupied={node}, extra_occupied_color=color)}{_longest_road_suffix(public_state, color, [edge])}",
             actions=[settle, Action(color, ActionType.BUILD_ROAD, edge)],
         )
         for edge in road_options
