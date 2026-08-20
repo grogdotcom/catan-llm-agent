@@ -9,12 +9,14 @@ Now works with Observation agent's public_state and player inventory instead of
 direct Game/State access or features for better information hiding.
 """
 
-from typing import Dict, Any, List, Optional, Sequence, Tuple
+import re
+from typing import Dict, Any, List, Optional, Sequence, Set, Tuple, Union
 from collections import defaultdict
 from dataclasses import dataclass, field
-from catanatron.models.enums import ActionType, ActionPrompt, ActionRecord, RESOURCES
+from catanatron.models.enums import Action, ActionType, ActionPrompt, ActionRecord, RESOURCES
 from catanatron.models.public_state import PublicState, PublicBoard, PublicPlayer
 from catanatron.models.inventory import Inventory
+from catanatron.models.board import STATIC_GRAPH
 
 # Initial placement is only BUILD_SETTLEMENT / BUILD_ROAD until the first
 # non-setup action (typically ROLL). After that, those build types belong
@@ -1066,6 +1068,422 @@ def format_decision_prompt_with_history(
     prompt_parts.append("Select the best action from the available options above.")
 
     return "\n".join(prompt_parts)
+
+
+# ============================================================================
+# Playable-action formatting and compound-move planning
+# ============================================================================
+#
+# The LLM-facing view of a decision is a numbered list of "moves". A move is a
+# sequence of engine actions that together form one coherent decision: the LLM
+# picks a single move (by its stable index number) and the agent then drives
+# every engine prompt of that move without re-consulting the LLM.
+#
+# Roads are represented as sorted node pairs ``(n1, n2)`` (matching the board
+# occupancy data). Legal road edges are derived from the player's current roads
+# and settlements against the map's static graph, so compound moves that include
+# road placements (initial settlement + road, Road Building + two roads) bundle
+# the concrete edges the LLM wants instead of auto-completing them.
+
+AUTO_ROAD = "AUTO_ROAD"
+"""Fallback sentinel token in a Move's action list.
+
+Means: "resolve a legal BUILD_ROAD from the current prompt's playable actions".
+Only used when no public state is available to enumerate the concrete road
+edges upfront. With a public state, initial-placement roads and the Road
+Building card's two roads are bundled concretely instead (each as a sorted
+``(n1, n2)`` node pair), so the LLM picks the exact roads it wants.
+"""
+
+
+@dataclass
+class Move:
+    """A single LLM-choosable move: one or more engine actions to execute.
+
+    ``actions`` lists the exact engine Actions to return in order; a string
+    entry is a sentinel (see ``AUTO_ROAD``) resolved from the live prompt's
+    playable actions at execution time. The first entry is returned immediately
+    and the rest are queued, so compound moves (Knight + robber move, Road
+    Building + two roads, initial settlement + road) are decided once.
+    """
+
+    label: str
+    actions: List[Union[Action, str]]
+
+
+def _node_pip_total(public_state: Optional[PublicState], node_id: int) -> int:
+    """Total pips of the resource tiles touching a node (0 for desert/sea)."""
+    if public_state is None:
+        return 0
+    total = 0
+    for tile_id in public_state.board.map.adjacent_tiles.get(node_id, ()):
+        resource, roll = public_state.board.map.tiles.get(tile_id, (None, None))
+        if resource is not None:
+            total += get_pip_count(roll)
+    return total
+
+
+def _format_coordinate(coordinate) -> str:
+    """Render a cube coordinate as a compact string."""
+    if coordinate is None:
+        return "(unknown)"
+    return f"({coordinate[0]}, {coordinate[1]}, {coordinate[2]})"
+
+
+def _coordinate_tile_label(public_state: Optional[PublicState], coordinate) -> str:
+    """Render a coordinate as its board-map tile ID (falls back to the raw
+    coordinate when the public map is unavailable)."""
+    if public_state is None or coordinate is None:
+        return _format_coordinate(coordinate)
+    for tile_id, coord in public_state.board.map.tile_coordinates.items():
+        if coord == coordinate:
+            return f"Tile {tile_id}"
+    return _format_coordinate(coordinate)
+
+
+def _label_action(action: Action, public_state: Optional[PublicState] = None) -> str:
+    """A concise human description of a single action worth choosing."""
+    kind = action.action_type
+    value = action.value
+    name = getattr(kind, "name", str(kind))
+
+    if kind == ActionType.ROLL:
+        return "Roll the dice"
+    if kind == ActionType.END_TURN:
+        return "End turn"
+    if kind == ActionType.BUILD_ROAD:
+        return f"Build road on edge {tuple(sorted(value))}"
+    if kind == ActionType.BUILD_SETTLEMENT:
+        return f"Build settlement at node {value}"
+    if kind == ActionType.BUILD_CITY:
+        return f"Build city at node {value}"
+    if kind == ActionType.BUY_DEVELOPMENT_CARD:
+        return "Buy a development card"
+    if kind == ActionType.PLAY_KNIGHT_CARD:
+        return "Play Knight (then move the robber)"
+    if kind == ActionType.PLAY_YEAR_OF_PLENTY:
+        cards = ", ".join(_name_of(r) for r in value)
+        return f"Play Year of Plenty: take {cards}"
+    if kind == ActionType.PLAY_MONOPOLY:
+        return f"Play Monopoly: steal all {_name_of(value)}"
+    if kind == ActionType.PLAY_ROAD_BUILDING:
+        return "Play Road Building (then build two roads)"
+    if kind == ActionType.MOVE_ROBBER:
+        coordinate, victim = value
+        coord_str = _coordinate_tile_label(public_state, coordinate)
+        if victim is None:
+            return f"Move robber to {coord_str} (no steal)"
+        return f"Move robber to {coord_str} and steal from {_name_of(victim)}"
+    if kind == ActionType.DISCARD_RESOURCE:
+        return f"Discard one {_name_of(value)}"
+    if kind == ActionType.MARITIME_TRADE:
+        return f"Maritime trade: {_format_maritime_trade_value(value)}"
+    if kind == ActionType.OFFER_TRADE:
+        return f"Offer trade: {_format_trade_offer_value(value)}"
+    if kind == ActionType.ACCEPT_TRADE:
+        return f"Accept trade: {_format_trade_offer_value(value)}"
+    if kind == ActionType.REJECT_TRADE:
+        return f"Reject trade: {_format_trade_offer_value(value)}"
+    if kind == ActionType.CONFIRM_TRADE:
+        trade_part = _format_trade_offer_value(value[:10])
+        acceptor = _name_of(value[10]) if len(value) > 10 else "unknown"
+        return f"Confirm trade with {acceptor}: {trade_part}"
+    if kind == ActionType.CANCEL_TRADE:
+        return "Cancel trade"
+    return f"{name}: value={value!r}"
+
+
+def _knight_robber_followups(public_state: PublicState, color) -> List[Tuple]:
+    """Legal (coordinate, victim_or_None) MOVE_ROBBER targets after a Knight.
+
+    Mirrors the engine's ``robber_possibilities`` for a non-friendly-robber game,
+    derived entirely from public data: every land tile except the current robber
+    tile, stealing from any enemy holding at least one card. Kept in exact parity
+    so a bundled Knight move is accepted by the engine on the follow-up prompt.
+    """
+    map_data = public_state.board.map
+    robber_coordinate = map_data.tile_coordinates.get(public_state.board.robber_tile_id)
+
+    tiles_to_nodes: Dict[int, List[int]] = defaultdict(list)
+    for node_id, tile_ids in map_data.adjacent_tiles.items():
+        for tile_id in tile_ids:
+            tiles_to_nodes[tile_id].append(node_id)
+
+    targets = []
+    for tile_id in sorted(map_data.tile_coordinates):
+        coordinate = map_data.tile_coordinates[tile_id]
+        if coordinate == robber_coordinate:
+            continue
+
+        victims = set()
+        for node_id in tiles_to_nodes.get(tile_id, ()):
+            building = public_state.board.buildings.get(node_id)
+            if building is None:
+                continue
+            owner, _ = building
+            if owner != color and public_state.players[owner].hand_resource_count >= 1:
+                victims.add(owner)
+
+        if victims:
+            for victim in sorted(victims, key=lambda c: getattr(c, "name", str(c))):
+                targets.append((coordinate, victim))
+        else:
+            targets.append((coordinate, None))
+    return targets
+
+
+def _knight_moves(knight_action: Action, public_state: PublicState) -> List[Move]:
+    """Expand one PLAY_KNIGHT_CARD into bundled Knight + MOVE_ROBBER moves.
+
+    Each bundle is a single LLM choice that includes where to move the robber
+    and who to steal from, so the agent never decides the knight and the robber
+    in disjoint prompts.
+    """
+    color = knight_action.color
+    moves = []
+    for coordinate, victim in _knight_robber_followups(public_state, color):
+        followup = Action(color, ActionType.MOVE_ROBBER, (coordinate, victim))
+        tile_str = _coordinate_tile_label(public_state, coordinate)
+        if victim is None:
+            label = f"Play Knight -> move robber to {tile_str} (no steal)"
+        else:
+            label = f"Play Knight -> move robber to {tile_str} and steal from {_name_of(victim)}"
+        moves.append(Move(label=label, actions=[knight_action, followup]))
+    return moves
+
+
+def _own_network_nodes(public_state: PublicState, color) -> Set[int]:
+    """Nodes of the player's road/settlement network.
+
+    Mirrors the engine's connected-component nodes: own buildings plus the
+    endpoints of own roads, minus nodes occupied by an enemy settlement/city
+    (the network cannot pass through or build out of an enemy node).
+    """
+    board = public_state.board
+    own_buildings = {n for n, (owner, _) in board.buildings.items() if owner == color}
+    enemy_buildings = {n for n, (owner, _) in board.buildings.items() if owner != color}
+    endpoints = set()
+    for edge, owner in board.roads.items():
+        if owner == color:
+            endpoints.update(edge)
+    return (own_buildings | endpoints) - enemy_buildings
+
+
+def _land_edges_from(public_state: PublicState, color, nodes) -> List[Tuple[int, int]]:
+    """Sorted list of unowned land edges touching any of ``nodes``.
+
+    Mirrors the engine's ``Board.buildable_edges`` for a player whose network is
+    ``nodes``: every static-graph edge incident to a non-enemy network node
+    whose endpoints are land nodes and which no one owns yet. Enemy nodes are
+    excluded from the originating set because a network can never extend out of
+    an enemy settlement/city (roads may only run up to it).
+    """
+    land = public_state.board.map.land_nodes
+    owned = set(public_state.board.roads.keys())  # keys are already sorted pairs
+    nodes = set(nodes) - {
+        n for n, (owner, _) in public_state.board.buildings.items() if owner != color
+    }
+    edges = set()
+    for node in nodes:
+        for neighbor in STATIC_GRAPH.neighbors(node):
+            edge = tuple(sorted((node, neighbor)))
+            if edge in owned or node not in land or neighbor not in land:
+                continue
+            edges.add(edge)
+    return sorted(edges)
+
+
+def _road_building_moves(play_card: Action, public_state: PublicState) -> List[Move]:
+    """Expand PLAY_ROAD_BUILDING into concrete bundles of both road edges.
+
+    Emits one move per unordered pair of roads, so building two disconnected
+    edges "first" in either order is a single move (the resulting board is
+    identical). Roads are shown as sorted ``(n1, n2)`` node pairs. When only a
+    single road is possible the bundle has just one road.
+    """
+    color = play_card.color
+    base_network = _own_network_nodes(public_state, color)
+    first_roads = _land_edges_from(public_state, color, base_network)
+
+    moves = []
+    seen_pairs = set()
+    for first in first_roads:
+        second_network = base_network | set(first)
+        seconds = [
+            e
+            for e in _land_edges_from(public_state, color, second_network)
+            if e != first
+        ]
+        if not seconds:
+            label = f"Play Road Building -> build road {first}"
+            moves.append(
+                Move(
+                    label=label,
+                    actions=[play_card, Action(color, ActionType.BUILD_ROAD, first)],
+                )
+            )
+        else:
+            for second in seconds:
+                pair = frozenset((first, second))
+                if pair in seen_pairs:
+                    continue  # the reverse order is the same move
+                seen_pairs.add(pair)
+                road_a, road_b = sorted((first, second))
+                label = f"Play Road Building -> build roads {road_a} and {road_b}"
+                moves.append(
+                    Move(
+                        label=label,
+                        actions=[
+                            play_card,
+                            Action(color, ActionType.BUILD_ROAD, first),
+                            Action(color, ActionType.BUILD_ROAD, second),
+                        ],
+                    )
+                )
+    return moves
+
+
+def _setup_settlement_moves(settle: Action, public_state: PublicState) -> List[Move]:
+    """Expand an initial-placement settlement into concrete settlement + road moves.
+
+    Each settlement node is bundled with every legal road edge incident to it,
+    so the LLM chooses the road as part of the same initial-placement move.
+    """
+    color = settle.color
+    node = settle.value
+    road_options = _land_edges_from(public_state, color, {node})
+    if not road_options:
+        # Degenerate safety net: no road is legal from this node.
+        return [Move(label=_label_action(settle, public_state), actions=[settle])]
+    return [
+        Move(
+            label=f"Build settlement at node {node} -> build road {edge}",
+            actions=[settle, Action(color, ActionType.BUILD_ROAD, edge)],
+        )
+        for edge in road_options
+    ]
+
+
+def build_moves(playable_actions: Sequence[Action], observation=None) -> List[Move]:
+    """Build the LLM-choosable moves for a set of playable engine actions.
+
+    Args:
+        playable_actions: The engine's legal actions for the current prompt.
+        observation: Optional Observation. When provided, its public_state and
+            current_prompt drive compound-move expansion:
+            - PLAY_KNIGHT_CARD is expanded into one move per (robber tile,
+              steal victim) option, so playing the card and moving the robber
+              are decided together.
+            - An initial settlement (BUILD_INITIAL_SETTLEMENT prompt) is
+              bundled with every legal road edge incident to that node, so the
+              placement is decided as one move.
+            - PLAY_ROAD_BUILDING is bundled with each legal (first road, second
+              road) pair, so both free roads are chosen as part of the move.
+            Year of Plenty and Monopoly already carry their resource parameters
+            in a single action and are formatted as one move.
+        Without an observation the road-carrying moves degrade to an annotated
+        opener that the agent completes from the live prompt (see AUTO_ROAD).
+
+    Returns:
+        List of Moves; the LLM selects exactly one by index.
+    """
+    public_state = getattr(observation, "public_state", None)
+    current_prompt = getattr(observation, "current_prompt", None)
+
+    if not playable_actions:
+        return []
+
+    moves: List[Move] = []
+    for action in playable_actions:
+        kind = action.action_type
+
+        if kind == ActionType.PLAY_KNIGHT_CARD and public_state is not None:
+            moves.extend(_knight_moves(action, public_state))
+        elif kind == ActionType.PLAY_ROAD_BUILDING and public_state is not None:
+            moves.extend(_road_building_moves(action, public_state))
+        elif kind == ActionType.PLAY_ROAD_BUILDING:
+            label = "Play Road Building -> then build two roads"
+            moves.append(Move(label=label, actions=[action, AUTO_ROAD, AUTO_ROAD]))
+        elif (
+            kind == ActionType.BUILD_SETTLEMENT
+            and current_prompt == ActionPrompt.BUILD_INITIAL_SETTLEMENT
+            and public_state is not None
+        ):
+            moves.extend(_setup_settlement_moves(action, public_state))
+        elif (
+            kind == ActionType.BUILD_SETTLEMENT
+            and current_prompt == ActionPrompt.BUILD_INITIAL_SETTLEMENT
+        ):
+            label = f"{_label_action(action, public_state)} -> then place your initial road"
+            moves.append(Move(label=label, actions=[action, AUTO_ROAD]))
+        else:
+            moves.append(Move(label=_label_action(action, public_state), actions=[action]))
+    return moves
+
+
+def format_moves(moves: Sequence[Move], observation=None) -> str:
+    """Render moves as a numbered, LLM-readable list.
+
+    The list index is the stable handle the LLM returns; see ``parse_move``.
+    """
+    current_prompt = getattr(observation, "current_prompt", None)
+    lines = ["[PLAYABLE MOVES]"]
+    if current_prompt is not None:
+        phase = getattr(current_prompt, "name", str(current_prompt))
+        lines.append(f"[PHASE: {phase}]")
+    if not moves:
+        lines.append("  (no moves available)")
+        return "\n".join(lines)
+    for i, move in enumerate(moves, start=1):
+        lines.append(f"{i}. {move.label}")
+    return "\n".join(lines)
+
+
+def format_playable_actions(playable_actions: Sequence[Action], observation=None) -> str:
+    """Convenience wrapper: build moves for ``playable_actions`` and format them.
+
+    For agents that need the moves back (to map the LLM's chosen index to an
+    Action), use ``build_moves`` + ``parse_move`` instead.
+    """
+    return format_moves(build_moves(playable_actions, observation), observation=observation)
+
+
+def parse_move(response, moves: Sequence[Move]) -> Move:
+    """Convert an LLM's response (a stable move index) into the chosen Move.
+
+    Accepts an int, a bare number, a bracketed number like ``[3]``, or a
+    numbered line like ``3. Build city at node 10``.
+    """
+    if isinstance(response, int):
+        index = response
+    else:
+        match = re.match(r"\s*\[?(\d+)\]?", str(response))
+        if match is None:
+            raise ValueError(f"Cannot parse move index from response: {response!r}")
+        index = int(match.group(1))
+
+    if not 1 <= index <= len(moves):
+        raise ValueError(f"Move index {index} out of range (1..{len(moves)})")
+    return moves[index - 1]
+
+
+def pick_auto_road(playable_actions: Sequence[Action], public_state=None) -> Optional[Action]:
+    """Pick a legal BUILD_ROAD from the current prompt's playable actions.
+
+    Used to complete moves whose road placement cannot be bundled upfront
+    (initial-placement road, Road Building card roads). Scores each legal edge
+    by the pip value of both endpoints so the road extends toward productive
+    terrain; ties break deterministically by edge order.
+    """
+    roads = [a for a in playable_actions if a.action_type == ActionType.BUILD_ROAD]
+    if not roads:
+        return None
+
+    def score(action: Action) -> Tuple[int, Tuple]:
+        edge = tuple(sorted(action.value))
+        return _node_pip_total(public_state, edge[0]) + _node_pip_total(public_state, edge[1]), edge
+
+    return max(roads, key=score)
 
 
 # ============================================================================

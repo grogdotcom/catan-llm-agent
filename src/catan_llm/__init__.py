@@ -27,6 +27,13 @@ from catan_llm.game_formatter import (
     BoardOccupancyData,
     AdjacentHexInfo,
     BuildingInfo,
+    Move,
+    AUTO_ROAD,
+    build_moves,
+    format_moves,
+    format_playable_actions,
+    parse_move,
+    pick_auto_road,
 )
 
 __all__ = [
@@ -51,4 +58,11 @@ __all__ = [
     "BoardOccupancyData",
     "AdjacentHexInfo",
     "BuildingInfo",
+    "Move",
+    "AUTO_ROAD",
+    "build_moves",
+    "format_moves",
+    "format_playable_actions",
+    "parse_move",
+    "pick_auto_road",
 ]
