@@ -6,8 +6,7 @@ import pytest
 import sys
 import os
 import random
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'catanatron-forked', 'catanatron'))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'src'))
 
 from catanatron.game import Game
 from catanatron.models.player import Color, RandomPlayer, Player
@@ -22,7 +21,7 @@ from catanatron.models.enums import (
 )
 from catanatron.models.board import Board
 from catanatron.models.map import CatanMap, BASE_MAP_TEMPLATE
-from game_formatter import (
+from catan_llm.game_formatter import (
     gather_board_occupancy_data,
     BoardOccupancyData,
     PlayerBoardData,

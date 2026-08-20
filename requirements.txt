@@ -1,0 +1,2 @@
+catanatron @ git+https://github.com/grogdotcom/catanatron.git@feature/perspective-player-observation#egg=catanatron
+pytest
