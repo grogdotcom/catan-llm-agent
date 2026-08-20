@@ -13,7 +13,13 @@ from catanatron.models.inventory import Inventory
 from catanatron.models.public_state import PublicState
 from catanatron.models.enums import ActionRecord
 
-from catan_llm.format.board import get_board_occupancy, get_full_board_map
+from catan_llm.format.board import (
+    format_board_occupancy_data,
+    format_robber_info,
+    gather_board_occupancy_data,
+    get_board_occupancy,
+    get_full_board_map,
+)
 from catan_llm.format.history import format_public_history_window
 from catan_llm.format.players import (
     get_player_dev_cards,
@@ -205,3 +211,218 @@ def format_decision_prompt_with_history(
     prompt_parts.append("Select the best action from the available options above.")
 
     return "\n".join(prompt_parts)
+
+
+# ---------------------------------------------------------------------------
+# Integrated complete prompt — board → occupancy → robber → inventories → moves
+# ---------------------------------------------------------------------------
+
+def get_complete_prompt(
+    public_state: Optional[PublicState] = None,
+    current_player_color=None,
+    playable_actions: Optional[Sequence] = None,
+    current_player_inventory: Optional[Inventory] = None,
+    observation=None,
+    current_prompt: Optional[ActionPrompt] = None,
+    turn_number: Optional[int] = None,
+    include_header: bool = True,
+    include_footer: bool = True,
+) -> str:
+    """Build the complete LLM prompt in canonical section order.
+
+    Order is strictly:
+
+    1. ``[FULL BOARD MAP]`` — static 19-hex map via :func:`get_full_board_map`
+    2. ``[CURRENT BOARD OCCUPANCY]`` — settlements / cities / roads via
+       :func:`gather_board_occupancy_data` + :func:`format_board_occupancy_data`
+    3. ``ROBBER:`` — robber tile + blocked production via
+       :func:`format_robber_info` (computed from the same occupancy)
+    4. ``[PLAYERS]`` — consolidated per-player inventories (resources, dev
+       cards, VP, roads, army, ports, pips, pieces) via
+       :func:`get_players_summary`
+    5. ``[PLAYABLE MOVES]`` — rich numbered move list via
+       :func:`catan_llm.format.moves.build_moves` /
+       :func:`catan_llm.format.moves.format_moves`
+
+    ``observation`` is the primary source for move bundling (Knight → robber,
+    initial settlement → road, Road Building → two roads). When omitted, the
+    function builds a minimal shim from ``public_state`` / ``current_prompt`` so
+    move labels still include pip/port/tile detail. When an ``observation`` is
+    supplied its ``public_state`` is *not* used — the explicitly passed
+    ``public_state`` remains canonical — but its ``current_prompt`` is used for
+    the ``[PHASE: …]`` tag inside the moves block if ``current_prompt`` was not
+    given.
+
+    Args:
+        public_state: Public board snapshot from ``Observation.public_state``.
+        current_player_color: Color of the observer (``Color.RED`` etc. or
+            its string name); used to mark ``(YOU)`` and reveal exact hand.
+        playable_actions: Engine-legal actions for the current prompt.
+        current_player_inventory: Optional private :class:`Inventory` for the
+            observer; enables exact resource/dev counts and hidden-VP math.
+        observation: Optional full ``Observation`` (carries ``public_state`` and
+            ``current_prompt`` for compound-move expansion). If provided, its
+            ``current_prompt`` is used as fallback for ``current_prompt``.
+        current_prompt: Current :class:`ActionPrompt` / phase. Used for the
+            optional header and to expand initial-placement moves when
+            ``observation`` is not supplied.
+        turn_number: Optional turn index for the optional header.
+        include_header: When ``True`` (default) and any of
+            ``current_player_color`` / ``current_prompt`` / ``turn_number`` is
+            supplied, a ``[CURRENT PLAYER]`` / ``[TURN]`` / ``[PHASE]`` header
+            is prepended. Set ``False`` to get only the five canonical sections.
+        include_footer: When ``True`` (default) appends
+            ``[DECISION REQUIRED]``.
+
+    Returns:
+        Multiline string with the five sections in order, separated by a blank
+        line (``\"\\n\\n\"`` between rendered sections). Sections themselves are
+        multi-line.
+
+    Example:
+        >>> prompt = get_complete_prompt(
+        ...     public_state, Color.RED, playable_actions,
+        ...     inventory, observation=obs, turn_number=12
+        ... )
+        >>> assert prompt.index("[FULL BOARD MAP") < prompt.index("[CURRENT BOARD OCCUPANCY")
+        >>> assert prompt.index("ROBBER:") < prompt.index("[PLAYERS]")
+        >>> assert prompt.index("[PLAYERS]") < prompt.index("[PLAYABLE MOVES]")
+    """
+    # Lazy import to avoid circular import at module load (moves imports board).
+    from types import SimpleNamespace
+
+    from catan_llm.format.moves import build_moves, format_moves
+
+    # Allow public_state / playable_actions to be inferred from observation
+    # for the ergonomic `get_complete_prompt(observation=obs, ...)` call.
+    if public_state is None and observation is not None:
+        public_state = getattr(observation, "public_state", None)
+    if playable_actions is None and observation is not None:
+        # Some Observation shims store playable_actions on the engine, not the
+        # observation itself — caller should pass explicitly in that case.
+        playable_actions = getattr(observation, "playable_actions", None) or []
+    if public_state is None:
+        raise ValueError("public_state is required (or pass observation with .public_state)")
+    if playable_actions is None:
+        playable_actions = []
+    if current_player_color is None and observation is not None:
+        # Try to infer from observation if it carries color
+        inferred = getattr(observation, "color", None)
+        if inferred is not None:
+            current_player_color = inferred
+
+    # Resolve phase for header / moves shim
+    resolved_prompt = current_prompt
+    if resolved_prompt is None and observation is not None:
+        resolved_prompt = getattr(observation, "current_prompt", None)
+
+    # Single occupancy gather — reused for occupancy rendering and robber blocking.
+    occupancy_data = gather_board_occupancy_data(public_state)
+
+    sections: List[str] = []
+
+    # Optional header — only when caller supplied identity/phase context.
+    if include_header and (current_player_color is not None or resolved_prompt is not None or turn_number is not None):
+        header_lines: List[str] = []
+        if current_player_color is not None:
+            color_name = current_player_color.name if hasattr(current_player_color, "name") else str(current_player_color)
+            header_lines.append(f"[CURRENT PLAYER: {color_name}]")
+        if turn_number is not None:
+            header_lines.append(f"[TURN: {turn_number}]")
+        if resolved_prompt is not None:
+            phase_name = resolved_prompt.name if hasattr(resolved_prompt, "name") else str(resolved_prompt)
+            header_lines.append(f"[PHASE: {phase_name}]")
+        if header_lines:
+            sections.append("\n".join(header_lines))
+
+    # 1. Static board map
+    sections.append(get_full_board_map(public_state))
+    # 2. Dynamic occupancy (settlements / cities / roads, no robber)
+    sections.append(format_board_occupancy_data(occupancy_data))
+    # 3. Robber (tile detail + blocked production derived from same occupancy)
+    sections.append(format_robber_info(public_state, occupancy_data.players))
+    # 4. Consolidated per-player inventories
+    sections.append(get_players_summary(public_state, current_player_color, current_player_inventory))
+
+    # 5. Available moves — rich numbered list
+    if observation is not None:
+        moves = build_moves(playable_actions, observation)
+        moves_text = format_moves(moves, observation=observation)
+    else:
+        # Build a minimal observation shim so moves still get public-state-aware
+        # labels (pip/port/tile detail + longest-road hints).
+        shim = SimpleNamespace(public_state=public_state, current_prompt=resolved_prompt)
+        moves = build_moves(playable_actions, shim)
+        moves_text = format_moves(moves, observation=shim)
+    sections.append(moves_text)
+
+    if include_footer:
+        sections.append("[DECISION REQUIRED]\nSelect the best action from the available moves above.")
+
+    return "\n\n".join(sections)
+
+
+# Backwards-compatible / discoverability aliases — all point to the same impl.
+get_full_prompt = get_complete_prompt
+format_complete_prompt = get_complete_prompt
+build_complete_prompt = get_complete_prompt
+format_full_prompt = get_complete_prompt
+
+
+def format_observation_prompt(
+    observation,
+    playable_actions: Optional[Sequence] = None,
+    current_player_inventory: Optional[Inventory] = None,
+    include_header: bool = True,
+    include_footer: bool = True,
+) -> str:
+    """Convenience wrapper that builds the complete prompt directly from an Observation.
+
+    Derives ``public_state``, ``current_player_color`` (from ``observation.color``
+    or ``observation.public_state`` via caller), ``current_prompt`` and
+    ``playable_actions`` from the observation itself when not explicitly supplied.
+
+    This is the most ergonomic entry point for an ``ObservationAgent``:
+
+    >>> prompt = format_observation_prompt(observation, playable_actions, inventory)
+
+    Args:
+        observation: Observation object (must have ``public_state``; ideally also
+            ``current_prompt`` and optionally ``color`` / ``playable_actions``).
+        playable_actions: Override playable actions; when ``None`` uses
+            ``observation.playable_actions`` if present else ``[]``.
+        current_player_inventory: Optional private Inventory for the observer.
+        include_header: See :func:`get_complete_prompt`.
+        include_footer: See :func:`get_complete_prompt`.
+
+    Returns:
+        Same five-section prompt as :func:`get_complete_prompt`.
+    """
+    public_state = getattr(observation, "public_state", None)
+    color = getattr(observation, "color", None)
+    prompt = getattr(observation, "current_prompt", None)
+    # Some callers keep turn_number on observation or game; try common names.
+    turn_number = getattr(observation, "turn_number", None)
+    if turn_number is None:
+        turn_number = getattr(observation, "current_turn_index", None)
+    actions = playable_actions
+    if actions is None:
+        actions = getattr(observation, "playable_actions", None)
+        if actions is None:
+            actions = []
+    return get_complete_prompt(
+        public_state=public_state,
+        current_player_color=color,
+        playable_actions=actions,
+        current_player_inventory=current_player_inventory,
+        observation=observation,
+        current_prompt=prompt,
+        turn_number=turn_number,
+        include_header=include_header,
+        include_footer=include_footer,
+    )
+
+
+# Alias for the wrapper as well
+get_observation_prompt = format_observation_prompt
+build_observation_prompt = format_observation_prompt

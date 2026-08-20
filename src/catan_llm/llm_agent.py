@@ -20,6 +20,7 @@ from catan_llm.format import (
     Move,
     build_moves,
     format_moves,
+    get_complete_prompt,
     parse_move,
     pick_auto_road,
 )
@@ -111,6 +112,49 @@ class LLMObservationAgent(ObservationAgent):
         response = self.choose_move(text, observation)
         move = parse_move(response, moves)
         return self.executor.submit(move)
+
+    def build_full_prompt(self, observation, playable_actions, current_player_inventory=None) -> str:
+        """Build the integrated five-section prompt for this observation.
+
+        Order is board → occupancy → robber → inventories → moves. This is the
+        recommended prompt to send to the LLM; ``choose_move`` subclasses that
+        want the full context can call this instead of using ``formatted_moves``
+        directly, then parse the chosen index via ``parse_move``.
+
+        Args:
+            observation: Current Observation (carries ``public_state`` and phase).
+            playable_actions: Legal actions for the current prompt (if ``None``,
+                the agent's ``color`` and inventory are still used to render
+                the ``[PLAYERS]`` section with ``(YOU)`` marked).
+            current_player_inventory: Optional private Inventory for the
+                observer. When ``None``, attempts to use ``observation.inventory``
+                / ``observation.player_state`` if available, otherwise renders
+                the observer as hidden.
+
+        Returns:
+            Complete prompt string. See :func:`catan_llm.format.get_complete_prompt`.
+        """
+        inventory = current_player_inventory
+        if inventory is None:
+            inventory = getattr(observation, "inventory", None)
+            if inventory is None:
+                inventory = getattr(observation, "player_state", None)
+        # Prefer observation's own public_state / color
+        public_state = getattr(observation, "public_state", None)
+        color = getattr(observation, "color", self.color)
+        # Some Observations expose turn_number; fall back to None
+        turn_number = getattr(observation, "turn_number", None)
+        if turn_number is None:
+            turn_number = getattr(observation, "current_turn_index", None)
+        return get_complete_prompt(
+            public_state=public_state,
+            current_player_color=color,
+            playable_actions=playable_actions,
+            current_player_inventory=inventory,
+            observation=observation,
+            current_prompt=getattr(observation, "current_prompt", None),
+            turn_number=turn_number,
+        )
 
     def choose_move(self, formatted_moves: str, observation) -> str:
         """Send the formatted move list to the model; return the chosen index.

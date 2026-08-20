@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, Union
 
 from catanatron.models.board import STATIC_GRAPH
-from catanatron.models.enums import Action, ActionPrompt, ActionType
+from catanatron.models.enums import Action, ActionPrompt, ActionType, RESOURCES
 from catanatron.models.public_state import PublicState
 
 from catan_llm.format.board import get_adjacent_hex_info
@@ -711,6 +711,105 @@ def _setup_settlement_moves(settle: Action, public_state: PublicState) -> List[M
     ]
 
 
+def _generate_discard_combos(hand: Dict[str, int], k: int) -> List[Tuple[str, ...]]:
+    """Generate all distinct discard multisets of size k from a hand.
+
+    Each combo is a sorted tuple of resource names (e.g. ("BRICK","BRICK","SHEEP"))
+    whose multiset respects the hand limits. Combos are produced in sorted
+    lexicographic order for deterministic output. The hand dict is expected to
+    contain only resources with count > 0, but missing keys are treated as 0.
+
+    Args:
+        hand: Mapping resource name -> count in hand (e.g. {"WOOD":2,...}).
+        k: Number of cards to discard (hand_size // 2 when hand > 7).
+
+    Returns:
+        List of distinct combos, each as a tuple of length k sorted ascending.
+    """
+    # Fix resource order for determinism (WOOD, BRICK, SHEEP, WHEAT, ORE)
+    order = [r for r in RESOURCES if hand.get(r, 0) > 0]
+    # Already in RESOURCES order which is WOOD, BRICK, SHEEP, WHEAT, ORE — keep it
+    combos: List[Tuple[str, ...]] = []
+
+    def rec(idx: int, remaining: int, chosen: Dict[str, int]):
+        if remaining == 0:
+            combo: List[str] = []
+            for r in order:
+                combo.extend([r] * chosen.get(r, 0))
+            # combo is already sorted by order; for lexicographic determinism sort the tuple
+            # But order is fixed, so combo is already grouped; to get lexicographic overall,
+            # we collect and sort later.
+            combos.append(tuple(combo))
+            return
+        if idx >= len(order):
+            return
+        # Prune: not enough cards left in hand to fill remaining
+        max_possible = sum(hand[r] - chosen.get(r, 0) for r in order[idx:])
+        if max_possible < remaining:
+            return
+        r = order[idx]
+        max_take = min(hand[r] - chosen.get(r, 0), remaining)
+        for take in range(max_take + 1):
+            nxt = dict(chosen)
+            if take:
+                nxt[r] = take
+            rec(idx + 1, remaining - take, nxt)
+
+    rec(0, k, {})
+    combos.sort()
+    return combos
+
+
+def _discard_moves(color, inventory, k: int, public_state: Optional[PublicState] = None) -> List[Move]:
+    """Expand DISCARD into one move per distinct combination of k cards.
+
+    Each move bundles k sequential DISCARD_RESOURCE actions so the LLM chooses
+    the entire discard set at once instead of card-by-card. Labels show the
+    sorted resource list and a compact count summary.
+
+    Args:
+        color: Player discarding.
+        inventory: Private Inventory for the discarding player.
+        k: Number of cards to discard (hand // 2).
+        public_state: Optional public state for richer labeling (unused today but
+            kept for parity with other bundled builders).
+
+    Returns:
+        List of Moves, each with k actions. Empty list if k <= 0 or hand invalid.
+    """
+    if inventory is None or k <= 0:
+        return []
+    hand = {
+        "WOOD": getattr(inventory, "wood", 0),
+        "BRICK": getattr(inventory, "brick", 0),
+        "SHEEP": getattr(inventory, "sheep", 0),
+        "WHEAT": getattr(inventory, "wheat", 0),
+        "ORE": getattr(inventory, "ore", 0),
+    }
+    # Filter to >0 for efficiency, but keep hand for generation
+    hand = {r: c for r, c in hand.items() if c > 0}
+    if not hand or k <= 0:
+        return []
+    combos = _generate_discard_combos(hand, k)
+    if not combos:
+        return []
+
+    moves: List[Move] = []
+    for combo in combos:
+        actions = [Action(color, ActionType.DISCARD_RESOURCE, r) for r in combo]
+        # Count summary for label, e.g. "BRICK:2, SHEEP:1, WHEAT:1"
+        from collections import Counter
+
+        counts = Counter(combo)
+        # Preserve RESOURCES order in summary
+        summary = ", ".join(f"{r}:{counts[r]}" for r in RESOURCES if r in counts)
+        # Sorted resource list string
+        resources_str = ", ".join(combo)
+        label = f"Discard {resources_str} ({summary} → {k} cards)"
+        moves.append(Move(label=label, actions=actions))
+    return moves
+
+
 def build_moves(playable_actions: Sequence[Action], observation=None) -> List[Move]:
     """Build the LLM-choosable moves for a set of playable engine actions.
 
@@ -739,6 +838,29 @@ def build_moves(playable_actions: Sequence[Action], observation=None) -> List[Mo
 
     if not playable_actions:
         return []
+
+    # --- DISCARD bundling: offer all distinct k-card multisets instead of one-by-one ---
+    if current_prompt == ActionPrompt.DISCARD:
+        discard_actions = [a for a in playable_actions if a.action_type == ActionType.DISCARD_RESOURCE]
+        if discard_actions:
+            inventory = getattr(observation, "inventory", None) if observation is not None else None
+            if inventory is not None:
+                hand_total = sum(getattr(inventory, r.lower(), 0) for r in RESOURCES)
+                # Engine discards floor(hand/2) when hand > 7 (discard_limit)
+                k = hand_total // 2 if hand_total > 7 else 0
+                if k > 1:
+                    color = discard_actions[0].color
+                    bundled = _discard_moves(color, inventory, k, public_state)
+                    if bundled:
+                        moves: List[Move] = list(bundled)
+                        # DISCARD prompts never have non-discard actions, but keep for safety
+                        for a in playable_actions:
+                            if a.action_type != ActionType.DISCARD_RESOURCE:
+                                moves.append(Move(label=_label_action(a, public_state), actions=[a]))
+                        return moves
+                # k == 1 or bundled empty -> fall through to per-resource single moves
+            # No inventory (no observation) -> fall through to per-card moves
+            # to keep the move list valid without private state.
 
     moves: List[Move] = []
     for action in playable_actions:

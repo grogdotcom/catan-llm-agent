@@ -53,9 +53,17 @@ from catan_llm.format.history import (
     group_action_records_by_turn,
 )
 from catan_llm.format.prompts import (
+    build_complete_prompt,
+    build_observation_prompt,
+    format_complete_prompt,
     format_decision_prompt,
     format_decision_prompt_with_history,
+    format_full_prompt,
+    format_observation_prompt,
+    get_complete_prompt,
+    get_full_prompt,
     get_game_state_summary,
+    get_observation_prompt,
     summarize_catan_actions,
 )
 from catan_llm.format.moves import (
@@ -122,6 +130,14 @@ __all__ = [
     "summarize_catan_actions",
     "format_decision_prompt",
     "format_decision_prompt_with_history",
+    "get_complete_prompt",
+    "get_full_prompt",
+    "format_complete_prompt",
+    "format_full_prompt",
+    "build_complete_prompt",
+    "format_observation_prompt",
+    "get_observation_prompt",
+    "build_observation_prompt",
     # moves
     "AUTO_ROAD",
     "Move",
