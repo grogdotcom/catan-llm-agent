@@ -7,7 +7,7 @@ import os
 import random
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'src'))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '../..', 'src'))
 
 import pytest
 
@@ -35,7 +35,7 @@ from catanatron.models.perspective_player import (
 from catanatron.models.player import Color, RandomPlayer, Player
 from catanatron.state_functions import player_key
 
-from catan_llm.format import (
+from catan_llm.format.moves import (
     AUTO_ROAD,
     Move,
     _knight_robber_followups,

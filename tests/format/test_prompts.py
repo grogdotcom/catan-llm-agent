@@ -4,20 +4,17 @@ Simple test to demonstrate the game formatter functionality
 
 import os
 import sys
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'src'))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '../..', 'src'))
 
 from catanatron.game import Game
 from catanatron.models.player import Color, RandomPlayer
 from catanatron.models.perspective_player import _build_public_state
-from catan_llm.format import (
-    get_full_board_map,
-    get_board_occupancy,
-    get_player_resources,
-    get_player_dev_cards,
+from catan_llm.format.board import get_board_occupancy, get_full_board_map, gather_board_occupancy_data
+from catan_llm.format.players import get_player_dev_cards, get_player_resources
+from catan_llm.format.prompts import (
+    format_decision_prompt,
     get_game_state_summary,
     summarize_catan_actions,
-    format_decision_prompt,
-    gather_board_occupancy_data,
 )
 
 def test_formatter():

@@ -5,7 +5,7 @@ Now works with Observation agent's public_state, features, and inventory instead
 direct Game/State access for better information hiding.
 """
 
-from catan_llm.game_formatter import (
+from catan_llm.format import (
     get_full_board_map,
     get_board_occupancy,
     get_player_resources,

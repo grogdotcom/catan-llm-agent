@@ -15,7 +15,7 @@ from catanatron.models.enums import Action, ActionType
 from catanatron.models.observation_agent import ObservationAgent
 from catanatron.models.public_state import PublicState
 
-from catan_llm.game_formatter import (
+from catan_llm.format import (
     AUTO_ROAD,
     Move,
     build_moves,

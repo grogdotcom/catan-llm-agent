@@ -12,7 +12,7 @@ from catanatron.models.perspective_player import _build_public_state
 from catanatron.state_functions import player_key
 
 from collections import defaultdict
-from catan_llm.game_formatter import (
+from catan_llm.format import (
     get_full_board_map,
     get_board_occupancy,
     get_player_resources,

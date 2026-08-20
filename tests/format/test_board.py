@@ -6,7 +6,7 @@ import pytest
 import sys
 import os
 import random
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'src'))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '../..', 'src'))
 
 from catanatron.game import Game
 from catanatron.models.player import Color, RandomPlayer, Player
@@ -21,25 +21,29 @@ from catanatron.models.enums import (
 )
 from catanatron.models.board import Board
 from catanatron.models.map import CatanMap, BASE_MAP_TEMPLATE
-from catan_llm.format import (
-    gather_board_occupancy_data,
-    BoardOccupancyData,
-    PlayerBoardData,
-    BuildingInfo,
-    AdjacentHexInfo,
+from catan_llm.format.board import (
+    calculate_blocked_production,
     format_board_occupancy_data,
     format_robber_info,
-    calculate_blocked_production,
+    gather_board_occupancy_data,
     get_full_board_map,
-    get_pip_count,
-    get_player_resources,
-    get_player_dev_cards,
+)
+from catan_llm.format.models import (
+    AdjacentHexInfo,
+    BoardOccupancyData,
+    BuildingInfo,
+    PlayerBoardData,
+)
+from catan_llm.format.utils import get_pip_count
+# History & player imports kept for completeness (now from their own modules)
+from catan_llm.format.history import (
     describe_action_record,
-    group_action_records_by_turn,
     describe_turn,
     format_public_history,
     format_public_history_window,
+    group_action_records_by_turn,
 )
+from catan_llm.format.players import get_player_dev_cards, get_player_resources
 from catanatron.models.perspective_player import _build_public_state, _sanitize_history
 from catanatron.state_functions import player_key
 

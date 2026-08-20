@@ -1,0 +1,59 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "catan-llm-agent"
+version = "0.1.0"
+description = "LLM-friendly formatting for Catanatron"
+readme = "AGENTS.md"
+requires-python = ">=3.10"
+dependencies = [
+    "catanatron @ git+https://github.com/grogdotcom/catanatron.git@feature/perspective-player-observation",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7",
+    "pytest-cov>=4",
+    "coverage[toml]>=7",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-q"
+
+[tool.coverage.run]
+source = ["src/catan_llm"]
+branch = true
+omit = [
+    "*/tests/*",
+    "*/venv/*",
+    "*/__pycache__/*",
+    "src/catan_llm/collect_corpus.py",
+    # game_formatter is a deprecated shim — not counted
+    "src/catan_llm/game_formatter.py",
+]
+# Optional: use relative paths for portable reports
+relative_files = true
+
+[tool.coverage.report]
+# Overall package threshold — current baseline 81% (format alone is 90%).
+# Bump to 85 once prompts + llm_agent gaps are closed.
+fail_under = 80
+show_missing = true
+skip_covered = false
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "@overload",
+]
+
+[tool.coverage.html]
+directory = "htmlcov"
+
+[tool.coverage.xml]
+output = "coverage.xml"

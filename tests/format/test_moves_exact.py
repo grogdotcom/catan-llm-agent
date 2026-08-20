@@ -13,14 +13,14 @@ and the enriched details added for settlements/cities/roads/robber/longest-road.
 
 import sys
 import os
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "venv/lib/python3.14/site-packages"))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../..", "src"))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../venv/lib/python3.14/site-packages"))
 
 import pytest
 from catanatron.models.enums import Action, ActionType
 from catanatron.models.player import Color
 from catanatron.models.board import STATIC_GRAPH
-from catan_llm.format import (
+from catan_llm.format.moves import (
     _label_action,
     build_moves,
     format_moves,
@@ -478,7 +478,7 @@ def test_build_moves_initial_settlement_exact():
     # Uses tiny mock to hard-code expected settlement+road + longest suffix
     ps = _mock_public_state_for_node5()
     a = Action(Color.RED, ActionType.BUILD_SETTLEMENT, 0)
-    from catan_llm.format import _setup_settlement_moves
+    from catan_llm.format.moves import _setup_settlement_moves
     moves = _setup_settlement_moves(a, ps)
     # First road is (0,1) — exact string from earlier manual run
     expected = (
@@ -493,7 +493,7 @@ def test_build_moves_initial_settlement_exact():
 def test_build_moves_knight_bundling_exact():
     ps = _mock_public_state_with_settlements()
     knight = Action(Color.RED, ActionType.PLAY_KNIGHT_CARD, None)
-    from catan_llm.format import _knight_moves
+    from catan_llm.format.moves import _knight_moves
     moves = _knight_moves(knight, ps)
     # First follow-up is smallest tile_id (0) with victim BLUE (since BLUE at Node1)
     # Tile 0 detail includes both occupants, sorted BLUE then RED

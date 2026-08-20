@@ -11,11 +11,11 @@ sanitized / fallback branches inside describe_action_record.
 
 import sys
 import os
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../..", "src"))
 
 from catanatron.models.enums import Action, ActionRecord, ActionType
 from catanatron.models.player import Color
-from catan_llm.format import describe_action_record
+from catan_llm.format.history import describe_action_record
 
 
 def _rec(color, action_type, value=None, result=None):

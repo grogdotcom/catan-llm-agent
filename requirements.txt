@@ -1,2 +1,4 @@
 catanatron @ git+https://github.com/grogdotcom/catanatron.git@feature/perspective-player-observation#egg=catanatron
-pytest
+pytest>=7
+pytest-cov>=4
+coverage[toml]>=7
