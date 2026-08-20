@@ -83,27 +83,20 @@ def _describe_roll_resources(public_state, dice_total: int) -> str:
         inner = ", ".join(f"{cnt[r]} {r}" for r in ordered)
         parts.append(f"{owner} +{inner}")
 
-    # Format blocked part
+    # Format blocked part — simple "BLOCKED ORANGE 1 WOOD" style
     blocked_parts = []
     for owner in sorted(blocked_gains.keys()):
         cnt = Counter(blocked_gains[owner])
         ordered = [r for r in RESOURCES if r in cnt]
         inner = ", ".join(f"{cnt[r]} {r}" for r in ordered)
-        pips = blocked_pips[owner]
-        blocked_parts.append(f"{owner}: {pips} pips ({inner})")
+        blocked_parts.append(f"{owner} {inner}")
 
     if gains and blocked_parts:
-        robber_desc = ""
-        if robber_resource is not None:
-            robber_name = robber_resource.name if hasattr(robber_resource, "name") else str(robber_resource)
-            robber_desc = f" on robber Tile {robber_tile_id}: {robber_name} ({robber_pips} pips)"
-        return " — " + "; ".join(parts) + f"; Blocked {', '.join(blocked_parts)}{robber_desc}"
+        return " — " + "; ".join(parts) + f" - BLOCKED {', '.join(blocked_parts)}"
     if gains:
         return " — " + "; ".join(parts)
     if blocked_parts:
-        robber_name = robber_resource.name if robber_resource is not None and hasattr(robber_resource, "name") else str(robber_resource) if robber_resource is not None else "DESERT"
-        robber_desc = f" Tile {robber_tile_id}: {robber_name} ({robber_pips} pips)" if robber_tile_id is not None else ""
-        return f" — Blocked {', '.join(blocked_parts)} on robber{robber_desc} (no other settlements on roll)"
+        return f" — BLOCKED {', '.join(blocked_parts)}"
     return " — no resources (no settlements on roll)"
 
 
