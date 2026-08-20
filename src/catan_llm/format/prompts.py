@@ -15,13 +15,20 @@ from catanatron.models.enums import ActionRecord
 
 from catan_llm.format.board import get_board_occupancy, get_full_board_map
 from catan_llm.format.history import format_public_history_window
-from catan_llm.format.players import get_player_dev_cards, get_player_resources
+from catan_llm.format.players import (
+    get_player_dev_cards,
+    get_player_resources,
+    get_players_summary,
+)
 
 
 def get_game_state_summary(public_state: PublicState, current_player_color, current_player_inventory: Optional[Inventory] = None) -> str:
     """
     Create a comprehensive game state summary for LLM consumption.
-    Includes board map, occupancy, resources, and development cards.
+    Includes board map, occupancy, and a consolidated player-by-player
+    inventory (resources, dev cards, VP with hidden if known, road
+    length + Longest Road, army size + Largest Army, ports, pip
+    production total + per-resource, and pieces left).
 
     Args:
         public_state: The public state object from Observation agent
@@ -37,9 +44,7 @@ def get_game_state_summary(public_state: PublicState, current_player_color, curr
     sections.append("\n")
     sections.append(get_board_occupancy(public_state))
     sections.append("\n")
-    sections.append(get_player_resources(public_state, current_player_color, current_player_inventory))
-    sections.append("\n")
-    sections.append(get_player_dev_cards(public_state, current_player_color, current_player_inventory))
+    sections.append(get_players_summary(public_state, current_player_color, current_player_inventory))
 
     return "\n".join(sections)
 
@@ -59,7 +64,10 @@ def summarize_catan_actions(valid_actions: List) -> str:
 
         # 1. Handle Buildings & Board Expansion
         if action_type in (ActionType.BUILD_ROAD, ActionType.BUILD_SETTLEMENT, ActionType.BUILD_CITY):
-            grouped_actions[action_type.name].append(str(action.coordinate))
+            val = getattr(action, "coordinate", None)
+            if val is None:
+                val = getattr(action, "value", None)
+            grouped_actions[action_type.name].append(str(val))
 
         # 2. Handle Maritime & Bank Trades
         elif action_type == ActionType.MARITIME_TRADE:
@@ -72,10 +80,16 @@ def summarize_catan_actions(valid_actions: List) -> str:
         # 3. Handle Robber Movement
         elif action_type == ActionType.MOVE_ROBBER:
             try:
-                hex_coord = action.coordinate
-                victim = action.kwargs.get('victim_color', 'NONE')
+                # Action.value is (coordinate, victim_color)
+                val = getattr(action, "value", None)
+                if isinstance(val, tuple) and len(val) == 2:
+                    hex_coord, victim = val
+                    victim = victim if victim is not None else "NONE"
+                else:
+                    hex_coord = getattr(action, "coordinate", val)
+                    victim = getattr(action, "kwargs", {}).get('victim_color', 'NONE') if hasattr(action, 'kwargs') else "NONE"
                 grouped_actions["MOVE_ROBBER"].append(f"Hex {hex_coord} (Victim: {victim})")
-            except AttributeError:
+            except Exception:
                 grouped_actions["MOVE_ROBBER"].append(str(action))
 
         # 4. Handle Dev Cards & End Turn

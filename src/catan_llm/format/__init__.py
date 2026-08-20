@@ -39,7 +39,12 @@ from catan_llm.format.board import (
     get_board_occupancy,
     get_full_board_map,
 )
-from catan_llm.format.players import get_player_dev_cards, get_player_resources
+from catan_llm.format.players import (
+    get_player_dev_cards,
+    get_player_resources,
+    get_player_summary,
+    get_players_summary,
+)
 from catan_llm.format.history import (
     describe_action_record,
     describe_turn,
@@ -104,6 +109,8 @@ __all__ = [
     # players
     "get_player_resources",
     "get_player_dev_cards",
+    "get_players_summary",
+    "get_player_summary",
     # history
     "describe_action_record",
     "group_action_records_by_turn",
