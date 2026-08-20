@@ -455,11 +455,12 @@ def test_format_decision_prompt_with_history_window_variants():
     assert "[Showing setup phase only]" in out_zero
     # history uses "[TURN 1 (...)]" with space+digit; header uses "[TURN: 3]"
     assert "[TURN 1" not in out_zero and "[TURN 2" not in out_zero
-    # window 1 -> last turn only
+    # window 1 -> last turn only (absolute numbering: last of 3 = TURN 3)
     out_one = format_decision_prompt_with_history(ps, [], Color.RED.name, prompt, 3, hist, history_window_size=1)
     assert "[Showing last 1 of 3 turns]" in out_one
-    # one history turn plus zero setup "TURN " labels from header not counted; history turn label is "[TURN 1"
-    assert out_one.count("[TURN 1") == 1 and "[TURN 2" not in out_one
+    # history turn label is now absolute "[TURN 3 (RED)]"
+    assert "[TURN 3 (RED)]" in out_one
+    assert "[TURN 1 (RED)]" not in out_one and "[TURN 2 (BLUE)]" not in out_one
     # window larger than total -> no indicator
     out_big = format_decision_prompt_with_history(ps, [], Color.RED.name, prompt, 3, hist, history_window_size=10)
     assert "[Showing last" not in out_big

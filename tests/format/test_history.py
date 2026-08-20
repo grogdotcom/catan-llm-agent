@@ -506,11 +506,12 @@ def test_format_public_history_window_last_two_turns():
     # Should contain window indicator
     assert "[Showing last 2 of 3 turns]" in result
     
-    # Should contain last 2 turns (TURN 2 and TURN 3)
-    assert "[TURN 1 (BLUE)]" in result
-    assert "[TURN 2 (RED)]" in result
+    # Should contain last 2 turns (TURN 2 and TURN 3) with absolute numbering
+    assert "[TURN 2 (BLUE)]" in result
+    assert "[TURN 3 (RED)]" in result
     
     # Should NOT contain TURN 1 (RED) which was cut off
+    assert "[TURN 1 (RED)]" not in result
     assert result.count("[TURN") == 2  # Only 2 turns should appear
 
 

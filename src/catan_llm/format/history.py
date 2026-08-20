@@ -366,7 +366,7 @@ def format_public_history(records: Sequence[ActionRecord], public_state=None) ->
 
     sections = ["[PUBLIC HISTORY]"]
     turn_number = 0
-    for group in groups:
+    for idx, group in enumerate(groups):
         is_setup = all(r.action.action_type in _SETUP_ACTION_TYPES for r in group)
         if is_setup and turn_number == 0:
             label = "SETUP"
@@ -374,6 +374,11 @@ def format_public_history(records: Sequence[ActionRecord], public_state=None) ->
             turn_number += 1
             actor = _name_of(group[0].action.color)
             label = f"TURN {turn_number} ({actor})"
+            # trailing open group (no END_TURN) is the in-progress current turn
+            is_last = idx == len(groups) - 1
+            is_open = group[-1].action.action_type != ActionType.END_TURN
+            if is_last and is_open and not is_setup:
+                label += " - CURRENT"
         # Skip the outer [PUBLIC HISTORY] duplication inside describe_turn body
         sections.append(describe_turn(group, turn_label=label, public_state=public_state))
 
@@ -417,31 +422,65 @@ def format_public_history_window(
         else:
             turn_groups.append(group)
 
-    # Apply sliding window to turn groups
+    # Separate completed turns (END_TURN) from trailing open turn (no END_TURN yet)
+    # so previous actions of the current turn are always visible.
+    completed = []
+    open_group = None
+    if turn_groups:
+        # trailing group without END_TURN is the in-progress current turn
+        if turn_groups[-1][-1].action.action_type != ActionType.END_TURN:
+            open_group = turn_groups[-1]
+            completed = turn_groups[:-1]
+        else:
+            completed = turn_groups
+
+    total_completed = len(completed)
+    # total for indicator includes open if present (matches previous total_turns semantics)
+    total_turns = len(turn_groups)
+
+    # Apply sliding window to *completed* turns only — open is always appended
+    windowed = completed
     if window_size is not None and window_size >= 0:
-        turn_groups = turn_groups[-window_size:] if window_size > 0 else []
+        if window_size == 0:
+            windowed = []
+        elif window_size < total_completed:
+            windowed = completed[-window_size:]
 
     # Build sections
     sections = ["[PUBLIC HISTORY]"]
-    
+
     # Add window indicator if we're using a window
     if window_size is not None:
-        total_turns = len([g for g in groups if not all(r.action.action_type in _SETUP_ACTION_TYPES for r in g)])
         if window_size == 0:
             sections.append("[Showing setup phase only]")
-        elif window_size < total_turns:
-            sections.append(f"[Showing last {len(turn_groups)} of {total_turns} turns]")
+        elif open_group is not None:
+            if window_size < total_completed:
+                sections.append(f"[Showing last {len(windowed)} of {total_completed} turns + current (TURN {total_completed + 1})]")
+            elif window_size < total_turns:
+                sections.append(f"[Showing last {len(windowed)} of {total_completed} turns + current]")
+        elif window_size < total_completed:
+            sections.append(f"[Showing last {len(windowed)} of {total_completed} turns]")
 
     # Add setup phase if present
     if setup_group:
         sections.append(describe_turn(setup_group, turn_label="SETUP", public_state=public_state))
 
-    # Add turn groups with proper numbering
-    turn_number = 0
-    for group in turn_groups:
-        turn_number += 1
+    # Add windowed completed turns with absolute numbering
+    # E.g. total_completed=44, window=8 -> labels 37..44
+    offset = total_completed - len(windowed)
+    for idx, group in enumerate(windowed):
+        turn_number = offset + idx + 1
         actor = _name_of(group[0].action.color)
         label = f"TURN {turn_number} ({actor})"
         sections.append(describe_turn(group, turn_label=label, public_state=public_state))
+
+    # Append the in-progress current turn (if any) so previous actions
+    # of the current turn are visible even when window truncates.
+    # window_size==0 is explicitly "setup only" — do not include open.
+    if open_group is not None and window_size != 0:
+        actor = _name_of(open_group[0].action.color)
+        # open is the next turn after completed — mark as CURRENT
+        label = f"TURN {total_completed + 1} ({actor}) - CURRENT"
+        sections.append(describe_turn(open_group, turn_label=label, public_state=public_state))
 
     return "\n".join(sections)
