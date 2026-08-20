@@ -21,24 +21,40 @@ from catan_llm.format.utils import (
 
 
 def _describe_roll_resources(public_state, dice_total: int) -> str:
-    """Return concise resource-collection summary for a dice total."""
+    """Return concise resource-collection summary for a dice total.
+
+    Includes blocked production when the roll matches the robber tile.
+    """
 
     if public_state is None or dice_total == 7:
         return ""
-    # Skip robber tile
     robber_tile_id = getattr(public_state.board, "robber_tile_id", None)
+    # Fallback for older board shape using robber_coordinate -> tile lookup
+    if robber_tile_id is None:
+        # Try to derive from coordinate if needed (not critical for tests)
+        robber_tile_id = getattr(public_state.board, "robber_tile", None)
     gains: dict[str, List[str]] = defaultdict(list)
+    blocked_gains: dict[str, List[str]] = defaultdict(list)
+    blocked_pips: dict[str, int] = defaultdict(int)
     tiles = getattr(public_state.board.map, "tiles", {})
     adjacent_tiles = getattr(public_state.board.map, "adjacent_tiles", {})
     buildings = getattr(public_state.board, "buildings", {})
+
+    # Pre-fetch robber tile info for blocked check
+    robber_resource = None
+    robber_roll = None
+    robber_pips = 0
+    if robber_tile_id is not None and robber_tile_id in tiles:
+        robber_resource, robber_roll = tiles[robber_tile_id]
+        robber_pips = get_pip_count(robber_roll)
+
     for tile_id, (resource, roll) in tiles.items():
         if roll != dice_total:
-            continue
-        if tile_id == robber_tile_id:
             continue
         if resource is None:
             continue
         resource_name = resource.name if hasattr(resource, "name") else str(resource)
+        is_robber = tile_id == robber_tile_id
         # nodes adjacent to this tile
         for node_id, tids in adjacent_tiles.items():
             if tile_id not in tids:
@@ -50,18 +66,45 @@ def _describe_roll_resources(public_state, dice_total: int) -> str:
             is_city = str(btype) == "CITY" or (hasattr(btype, "name") and btype.name == "CITY")
             owner_name = _name_of(owner)
             count = 2 if is_city else 1
-            for _ in range(count):
-                gains[owner_name].append(resource_name)
-    if not gains:
-        return " — no resources (no settlements on roll)"
+            if is_robber:
+                # Blocked production — record pips and resource counts
+                for _ in range(count):
+                    blocked_gains[owner_name].append(resource_name)
+                blocked_pips[owner_name] += robber_pips * count
+            else:
+                for _ in range(count):
+                    gains[owner_name].append(resource_name)
+
+    # Format gains part
     parts = []
     for owner in sorted(gains.keys()):
         cnt = Counter(gains[owner])
-        # Order by RESOURCES order
         ordered = [r for r in RESOURCES if r in cnt]
         inner = ", ".join(f"{cnt[r]} {r}" for r in ordered)
         parts.append(f"{owner} +{inner}")
-    return " — " + "; ".join(parts)
+
+    # Format blocked part
+    blocked_parts = []
+    for owner in sorted(blocked_gains.keys()):
+        cnt = Counter(blocked_gains[owner])
+        ordered = [r for r in RESOURCES if r in cnt]
+        inner = ", ".join(f"{cnt[r]} {r}" for r in ordered)
+        pips = blocked_pips[owner]
+        blocked_parts.append(f"{owner}: {pips} pips ({inner})")
+
+    if gains and blocked_parts:
+        robber_desc = ""
+        if robber_resource is not None:
+            robber_name = robber_resource.name if hasattr(robber_resource, "name") else str(robber_resource)
+            robber_desc = f" on robber Tile {robber_tile_id}: {robber_name} ({robber_pips} pips)"
+        return " — " + "; ".join(parts) + f"; Blocked {', '.join(blocked_parts)}{robber_desc}"
+    if gains:
+        return " — " + "; ".join(parts)
+    if blocked_parts:
+        robber_name = robber_resource.name if robber_resource is not None and hasattr(robber_resource, "name") else str(robber_resource) if robber_resource is not None else "DESERT"
+        robber_desc = f" Tile {robber_tile_id}: {robber_name} ({robber_pips} pips)" if robber_tile_id is not None else ""
+        return f" — Blocked {', '.join(blocked_parts)} on robber{robber_desc} (no other settlements on roll)"
+    return " — no resources (no settlements on roll)"
 
 
 def describe_action_record(record: ActionRecord, public_state=None) -> str:
@@ -327,7 +370,46 @@ def describe_turn(
         settlement_counts = defaultdict(int)
 
     lines = [f"[{turn_label}]"]
-    for record in records:
+    i = 0
+    while i < len(records):
+        record = records[i]
+        # Aggregate contiguous DISCARD_RESOURCE records (e.g. 7-roll) per player
+        # to match bundled playable-move format: "ORANGE discarded WOOD, WHEAT, SHEEP, WHEAT (WOOD: 1, WHEAT: 2, SHEEP: 1)"
+        if record.action.action_type == ActionType.DISCARD_RESOURCE:
+            j = i
+            batch = []
+            while j < len(records) and records[j].action.action_type == ActionType.DISCARD_RESOURCE:
+                batch.append(records[j])
+                j += 1
+            # Group by color preserving first-appearance order
+            per_color: dict[str, list[str]] = {}
+            order: list[str] = []
+            for rec in batch:
+                color = _name_of(rec.action.color)
+                # result holds revealed resource for self; value is fallback
+                res = _name_of(rec.result if rec.result is not None else rec.action.value)
+                if color not in per_color:
+                    per_color[color] = []
+                    order.append(color)
+                per_color[color].append(res)
+            for color in order:
+                resources = per_color[color]
+                if len(resources) == 1:
+                    # single discard keeps original phrasing to avoid churn
+                    lines.append(f"  - {color} discarded {resources[0]}")
+                else:
+                    counts = Counter(resources)
+                    # preserve first-appearance order for summary (matches example: WOOD, WHEAT, SHEEP)
+                    seen: list[str] = []
+                    for r in resources:
+                        if r not in seen:
+                            seen.append(r)
+                    summary = ", ".join(f"{r}: {counts[r]}" for r in seen)
+                    res_str = ", ".join(resources)
+                    lines.append(f"  - {color} discarded {res_str} ({summary})")
+            i = j
+            continue
+
         base = describe_action_record(record, public_state=public_state)
         # Second initial settlement per color → append starting resources
         if is_setup and public_state is not None and record.action.action_type == ActionType.BUILD_SETTLEMENT:
@@ -342,6 +424,7 @@ def describe_turn(
                 except Exception:
                     pass
         lines.append(f"  - {base}")
+        i += 1
     return "\n".join(lines)
 
 
@@ -389,6 +472,7 @@ def format_public_history_window(
     records: Sequence[ActionRecord],
     window_size: Optional[int] = None,
     public_state=None,
+    current_turn_number: Optional[int] = None,
 ) -> str:
     """Format public_history with a sliding window of the last N turns.
 
@@ -403,6 +487,11 @@ def format_public_history_window(
             If 0, only includes setup phase if present.
         public_state: Optional board snapshot for enriched detail (til/port/pips
             on settlements/cities/roads, robber tile, roll resources).
+        current_turn_number: Optional header turn number (e.g. game.state.num_turns)
+            to align history labels with the [TURN: N] header. When provided,
+            completed window labels are computed as current_turn_number - len(windowed)
+            .. current_turn_number-1 and the open current turn (if any) is labeled
+            current_turn_number - CURRENT, matching the header.
 
     Returns:
         Multi-line string ready for LLM consumption with turn window indicator.
@@ -455,7 +544,10 @@ def format_public_history_window(
             sections.append("[Showing setup phase only]")
         elif open_group is not None:
             if window_size < total_completed:
-                sections.append(f"[Showing last {len(windowed)} of {total_completed} turns + current (TURN {total_completed + 1})]")
+                if current_turn_number is not None:
+                    sections.append(f"[Showing last {len(windowed)} of {total_completed} turns + current (TURN {current_turn_number})]")
+                else:
+                    sections.append(f"[Showing last {len(windowed)} of {total_completed} turns + current (TURN {total_completed + 1})]")
             elif window_size < total_turns:
                 sections.append(f"[Showing last {len(windowed)} of {total_completed} turns + current]")
         elif window_size < total_completed:
@@ -465,22 +557,43 @@ def format_public_history_window(
     if setup_group:
         sections.append(describe_turn(setup_group, turn_label="SETUP", public_state=public_state))
 
-    # Add windowed completed turns with absolute numbering
-    # E.g. total_completed=44, window=8 -> labels 37..44
-    offset = total_completed - len(windowed)
-    for idx, group in enumerate(windowed):
-        turn_number = offset + idx + 1
-        actor = _name_of(group[0].action.color)
-        label = f"TURN {turn_number} ({actor})"
-        sections.append(describe_turn(group, turn_label=label, public_state=public_state))
+    # Add windowed completed turns with numbering.
+    # When current_turn_number is provided and window is truncated, align
+    # labels with header [TURN: N] so history current == header.
+    # Otherwise use absolute sequential numbering (1..total).
+    use_header_alignment = (
+        current_turn_number is not None
+        and window_size is not None
+        and window_size > 0
+        and window_size < total_completed
+    )
+    if use_header_alignment:
+        # windowed are current_turn_number - len(windowed) .. current_turn_number -1
+        # open (if any) will be current_turn_number
+        for idx, group in enumerate(windowed):
+            turn_number = current_turn_number - len(windowed) + idx
+            # when open exists, last windowed should be current-1; without open, same
+            # adjust for open presence: windowed last is current-1 regardless
+            actor = _name_of(group[0].action.color)
+            label = f"TURN {turn_number} ({actor})"
+            sections.append(describe_turn(group, turn_label=label, public_state=public_state))
+    else:
+        offset = total_completed - len(windowed)
+        for idx, group in enumerate(windowed):
+            turn_number = offset + idx + 1
+            actor = _name_of(group[0].action.color)
+            label = f"TURN {turn_number} ({actor})"
+            sections.append(describe_turn(group, turn_label=label, public_state=public_state))
 
     # Append the in-progress current turn (if any) so previous actions
     # of the current turn are visible even when window truncates.
     # window_size==0 is explicitly "setup only" — do not include open.
     if open_group is not None and window_size != 0:
         actor = _name_of(open_group[0].action.color)
-        # open is the next turn after completed — mark as CURRENT
-        label = f"TURN {total_completed + 1} ({actor}) - CURRENT"
+        if current_turn_number is not None:
+            label = f"TURN {current_turn_number} ({actor}) - CURRENT"
+        else:
+            label = f"TURN {total_completed + 1} ({actor}) - CURRENT"
         sections.append(describe_turn(open_group, turn_label=label, public_state=public_state))
 
     return "\n".join(sections)

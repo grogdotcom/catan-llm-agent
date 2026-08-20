@@ -382,7 +382,7 @@ def get_complete_prompt(
     # enrich with public_state so settlement/city/road/robber/roll lines mirror
     # playable-move detail (tile/port/pips, road endpoints, robber tile, roll resources).
     history_block = format_public_history_window(
-        history_records, window_size=history_window_size, public_state=public_state
+        history_records, window_size=history_window_size, public_state=public_state, current_turn_number=turn_number
     )
     # Provide both a RECENT TURNS alias (requirement language) and the canonical
     # [PUBLIC HISTORY] block so searches for either marker succeed. The alias header

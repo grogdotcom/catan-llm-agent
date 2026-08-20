@@ -455,9 +455,13 @@ def test_group_and_format_real_sanitized_history():
     assert text.startswith("[PUBLIC HISTORY]\n[SETUP]")
     assert "rolled" in text
     assert "ended turn" in text
-    # Every record yields exactly one bullet line
+    # Discards are aggregated per player per contiguous block (e.g. 4 discards -> 1 bullet)
     bullet_count = sum(1 for line in text.splitlines() if line.startswith("  - "))
-    assert bullet_count == len(history)
+    non_discard = sum(1 for r in history if r.action.action_type != ActionType.DISCARD_RESOURCE)
+    assert bullet_count >= non_discard
+    assert bullet_count <= len(history)
+    if any(r.action.action_type == ActionType.DISCARD_RESOURCE for r in history):
+        assert "discarded" in text
 
 
 
