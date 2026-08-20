@@ -5,6 +5,7 @@ Covers describe_action_record, group_action_records_by_turn, describe_turn,
 format_public_history and windowed variants.
 """
 
+from collections import Counter, defaultdict
 from typing import Any, List, Optional, Sequence, Tuple
 
 from catanatron.models.enums import ActionRecord, ActionType, RESOURCES
@@ -15,20 +16,72 @@ from catan_llm.format.utils import (
     _format_resource_counts,
     _format_trade_offer_value,
     _name_of,
+    get_pip_count,
 )
 
 
-def describe_action_record(record: ActionRecord) -> str:
+def _describe_roll_resources(public_state, dice_total: int) -> str:
+    """Return concise resource-collection summary for a dice total."""
+
+    if public_state is None or dice_total == 7:
+        return ""
+    # Skip robber tile
+    robber_tile_id = getattr(public_state.board, "robber_tile_id", None)
+    gains: dict[str, List[str]] = defaultdict(list)
+    tiles = getattr(public_state.board.map, "tiles", {})
+    adjacent_tiles = getattr(public_state.board.map, "adjacent_tiles", {})
+    buildings = getattr(public_state.board, "buildings", {})
+    for tile_id, (resource, roll) in tiles.items():
+        if roll != dice_total:
+            continue
+        if tile_id == robber_tile_id:
+            continue
+        if resource is None:
+            continue
+        resource_name = resource.name if hasattr(resource, "name") else str(resource)
+        # nodes adjacent to this tile
+        for node_id, tids in adjacent_tiles.items():
+            if tile_id not in tids:
+                continue
+            b = buildings.get(node_id)
+            if b is None:
+                continue
+            owner, btype = b
+            is_city = str(btype) == "CITY" or (hasattr(btype, "name") and btype.name == "CITY")
+            owner_name = _name_of(owner)
+            count = 2 if is_city else 1
+            for _ in range(count):
+                gains[owner_name].append(resource_name)
+    if not gains:
+        return " — no resources (no settlements on roll)"
+    parts = []
+    for owner in sorted(gains.keys()):
+        cnt = Counter(gains[owner])
+        # Order by RESOURCES order
+        ordered = [r for r in RESOURCES if r in cnt]
+        inner = ", ".join(f"{cnt[r]} {r}" for r in ordered)
+        parts.append(f"{owner} +{inner}")
+    return " — " + "; ".join(parts)
+
+
+def describe_action_record(record: ActionRecord, public_state=None) -> str:
     """Describe a single ActionRecord as one structured human-readable line.
 
     Uses the sanitized public_history conventions: redacted fields (e.g. hidden
     stolen card, opponent dev-card identity) are phrased as unknown/hidden.
 
+    When ``public_state`` is supplied, settlement/city/road/robber and roll
+    lines are enriched with the same tile/port/pip detail used in the
+    playable-move list (adjacent tile + port info with pips, road endpoints,
+    robber tile info, resources collected on roll).
+
     Args:
         record: A (possibly sanitized) ActionRecord from Observation.public_history.
+        public_state: Optional board snapshot for enriched detail.
 
     Returns:
-        A single-line description such as ``RED rolled 4+3 = 7``.
+        A single-line description such as ``RED rolled 4+3 = 7`` or
+        ``RED built settlement at Node 5: (Tile 0: 11 SHEEP (2 pips)) ...``.
     """
     action = record.action
     color = _name_of(action.color)
@@ -40,20 +93,53 @@ def describe_action_record(record: ActionRecord) -> str:
         dice = result if result is not None else value
         if dice is not None and len(dice) == 2:
             total = dice[0] + dice[1]
-            return f"{color} rolled {dice[0]}+{dice[1]} = {total}"
+            base = f"{color} rolled {dice[0]}+{dice[1]} = {total}"
+            if public_state is not None:
+                base += _describe_roll_resources(public_state, total)
+            return base
         return f"{color} rolled"
 
     if action_type == ActionType.END_TURN:
         return f"{color} ended turn"
 
     if action_type == ActionType.BUILD_SETTLEMENT:
+        if public_state is not None:
+            try:
+                from catan_llm.format.moves import _describe_node
+
+                node_desc = _describe_node(public_state, value)
+                return f"{color} built settlement at {node_desc}"
+            except Exception:
+                pass
         return f"{color} built settlement at node {value}"
 
     if action_type == ActionType.BUILD_CITY:
+        if public_state is not None:
+            try:
+                from catan_llm.format.moves import _describe_node
+
+                node_desc = _describe_node(public_state, value)
+                return f"{color} built city at {node_desc}"
+            except Exception:
+                pass
         return f"{color} built city at node {value}"
 
     if action_type == ActionType.BUILD_ROAD:
         edge = tuple(sorted(value)) if value is not None else value
+        if public_state is not None and edge is not None:
+            try:
+                from catan_llm.format.moves import _describe_node
+
+                # History road: show both endpoint nodes with tile/port/pips
+                # (mirrors playable-move node detail but without prospective
+                # reachability that would depend on the *current* board's future
+                # buildings — e.g., a setup road should not show as blocked by a
+                # city that was built later).
+                a_desc = _describe_node(public_state, edge[0])
+                b_desc = _describe_node(public_state, edge[1])
+                return f"{color} built road on edge {edge} | connects {a_desc} <-> {b_desc}"
+            except Exception:
+                pass
         return f"{color} built road on edge {edge}"
 
     if action_type == ActionType.BUY_DEVELOPMENT_CARD:
@@ -67,7 +153,19 @@ def describe_action_record(record: ActionRecord) -> str:
         victim = None
         if value is not None:
             coordinate, victim = value[0], value[1]
-        coord_str = coordinate if coordinate is not None else "unknown"
+        # Enriched tile detail mirrors playable-move robber label
+        tile_detail = None
+        if public_state is not None and coordinate is not None:
+            try:
+                from catan_llm.format.moves import _robber_tile_detail
+
+                tile_detail = _robber_tile_detail(public_state, coordinate)
+            except Exception:
+                tile_detail = None
+        coord_str = tile_detail if tile_detail is not None else (coordinate if coordinate is not None else "unknown")
+        # Fall back to raw coordinate formatting if tile_detail unavailable
+        if tile_detail is None:
+            coord_str = coordinate if coordinate is not None else "unknown"
         if victim is None:
             return f"{color} moved robber to {coord_str} (no steal)"
         victim_name = _name_of(victim)
@@ -188,6 +286,7 @@ def group_action_records_by_turn(
 def describe_turn(
     records: Sequence[ActionRecord],
     turn_label: Optional[str] = None,
+    public_state=None,
 ) -> str:
     """Describe one turn group as structured human-readable text.
 
@@ -196,6 +295,8 @@ def describe_turn(
             ``group_action_records_by_turn``).
         turn_label: Optional header label (e.g. ``"SETUP"``, ``"TURN 3"``).
             When omitted, a label is inferred from the records.
+        public_state: Optional board snapshot for enriched detail (settlement
+            tile/port/pips, road endpoints, robber tile, roll resources).
 
     Returns:
         Multi-line string: a header line plus one bullet per event.
@@ -213,13 +314,38 @@ def describe_turn(
             actor = _name_of(records[0].action.color)
             turn_label = f"TURN ({actor})"
 
+    # For SETUP, annotate the *second* settlement per color with its
+    # starting resources — mirrors _setup_settlement_moves for playable moves.
+    is_setup = turn_label == "SETUP" or (
+        turn_label is None
+        and records
+        and records[0].action.action_type in _SETUP_ACTION_TYPES
+        and all(r.action.action_type in _SETUP_ACTION_TYPES for r in records)
+    )
+    settlement_counts: dict[Any, int] = {}
+    if is_setup and public_state is not None:
+        settlement_counts = defaultdict(int)
+
     lines = [f"[{turn_label}]"]
     for record in records:
-        lines.append(f"  - {describe_action_record(record)}")
+        base = describe_action_record(record, public_state=public_state)
+        # Second initial settlement per color → append starting resources
+        if is_setup and public_state is not None and record.action.action_type == ActionType.BUILD_SETTLEMENT:
+            key = record.action.color
+            settlement_counts[key] = settlement_counts.get(key, 0) + 1
+            if settlement_counts[key] == 2:
+                try:
+                    from catan_llm.format.board import format_starting_resources
+
+                    sr = format_starting_resources(public_state, record.action.value)
+                    base += f" → Starting resources: {sr}"
+                except Exception:
+                    pass
+        lines.append(f"  - {base}")
     return "\n".join(lines)
 
 
-def format_public_history(records: Sequence[ActionRecord]) -> str:
+def format_public_history(records: Sequence[ActionRecord], public_state=None) -> str:
     """Format a full public_history as turn-grouped human-readable text.
 
     Groups records via ``group_action_records_by_turn``, then describes each
@@ -229,6 +355,7 @@ def format_public_history(records: Sequence[ActionRecord]) -> str:
 
     Args:
         records: Observation.public_history (or any ActionRecord sequence).
+        public_state: Optional board snapshot for enriched detail.
 
     Returns:
         Multi-line string ready for LLM consumption.
@@ -248,7 +375,7 @@ def format_public_history(records: Sequence[ActionRecord]) -> str:
             actor = _name_of(group[0].action.color)
             label = f"TURN {turn_number} ({actor})"
         # Skip the outer [PUBLIC HISTORY] duplication inside describe_turn body
-        sections.append(describe_turn(group, turn_label=label))
+        sections.append(describe_turn(group, turn_label=label, public_state=public_state))
 
     return "\n".join(sections)
 
@@ -256,6 +383,7 @@ def format_public_history(records: Sequence[ActionRecord]) -> str:
 def format_public_history_window(
     records: Sequence[ActionRecord],
     window_size: Optional[int] = None,
+    public_state=None,
 ) -> str:
     """Format public_history with a sliding window of the last N turns.
 
@@ -268,6 +396,8 @@ def format_public_history_window(
         window_size: Number of recent turns to include (excluding setup).
             If None, formats all turns (equivalent to format_public_history).
             If 0, only includes setup phase if present.
+        public_state: Optional board snapshot for enriched detail (til/port/pips
+            on settlements/cities/roads, robber tile, roll resources).
 
     Returns:
         Multi-line string ready for LLM consumption with turn window indicator.
@@ -304,7 +434,7 @@ def format_public_history_window(
 
     # Add setup phase if present
     if setup_group:
-        sections.append(describe_turn(setup_group, turn_label="SETUP"))
+        sections.append(describe_turn(setup_group, turn_label="SETUP", public_state=public_state))
 
     # Add turn groups with proper numbering
     turn_number = 0
@@ -312,6 +442,6 @@ def format_public_history_window(
         turn_number += 1
         actor = _name_of(group[0].action.color)
         label = f"TURN {turn_number} ({actor})"
-        sections.append(describe_turn(group, turn_label=label))
+        sections.append(describe_turn(group, turn_label=label, public_state=public_state))
 
     return "\n".join(sections)

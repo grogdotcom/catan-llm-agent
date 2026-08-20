@@ -114,12 +114,13 @@ class LLMObservationAgent(ObservationAgent):
         return self.executor.submit(move)
 
     def build_full_prompt(self, observation, playable_actions, current_player_inventory=None) -> str:
-        """Build the integrated five-section prompt for this observation.
+        """Build the integrated six-section prompt for this observation.
 
-        Order is board → occupancy → robber → inventories → moves. This is the
-        recommended prompt to send to the LLM; ``choose_move`` subclasses that
-        want the full context can call this instead of using ``formatted_moves``
-        directly, then parse the chosen index via ``parse_move``.
+        Order is board → occupancy → robber → inventories → recent turns (last 8)
+        → moves. This is the recommended prompt to send to the LLM;
+        ``choose_move`` subclasses that want the full context can call this
+        instead of using ``formatted_moves`` directly, then parse the chosen
+        index via ``parse_move``.
 
         Args:
             observation: Current Observation (carries ``public_state`` and phase).

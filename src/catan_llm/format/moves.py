@@ -22,7 +22,7 @@ from catanatron.models.board import STATIC_GRAPH
 from catanatron.models.enums import Action, ActionPrompt, ActionType, RESOURCES
 from catanatron.models.public_state import PublicState
 
-from catan_llm.format.board import get_adjacent_hex_info
+from catan_llm.format.board import format_starting_resources, get_adjacent_hex_info
 from catan_llm.format.utils import _format_maritime_trade_value, _format_trade_offer_value, _name_of, get_pip_count, _format_coordinate
 
 AUTO_ROAD = "AUTO_ROAD"
@@ -693,18 +693,37 @@ def _setup_settlement_moves(settle: Action, public_state: PublicState) -> List[M
     Each settlement node is bundled with every legal road edge incident to it,
     so the LLM chooses the road as part of the same initial-placement move.
     Labels include rich node/edge context: settlement tile/port/pips and road
-    expansion potential.
+    expansion potential. When this is the player's *second* initial settlement
+    (they already own one settlement), the label also includes the starting
+    resources that settlement would yield (one per adjacent non-desert tile),
+    mirroring the history view.
     """
     color = settle.color
     node = settle.value
     road_options = _land_edges_from(public_state, color, {node})
+    # Detect second initial settlement: player already has one settlement.
+    existing = sum(1 for _, (c, _) in public_state.board.buildings.items() if c == color)
+    is_second = existing == 1
+    starting_suffix = ""
+    if is_second:
+        try:
+            sr = format_starting_resources(public_state, node)
+            starting_suffix = f" → Starting resources: {sr}"
+        except Exception:
+            starting_suffix = ""
     if not road_options:
         # Degenerate safety net: no road is legal from this node.
-        return [Move(label=_label_action(settle, public_state), actions=[settle])]
+        base_label = _label_action(settle, public_state)
+        # _label_action for settlement is "Build settlement at Node ..." — enrich with resources if second
+        if is_second and "Starting resources" not in base_label:
+            base_label += starting_suffix
+        return [Move(label=base_label, actions=[settle])]
     settle_desc = _describe_node(public_state, node)
+    # Append starting resources right after the settlement description, before the road.
+    settle_desc_with_resources = f"{settle_desc}{starting_suffix}"
     return [
         Move(
-            label=f"Build settlement at {settle_desc} -> build road {edge}{_road_node_detail(public_state, edge, exclude_nodes={node}, network_nodes={node}, extra_occupied={node}, extra_occupied_color=color)}{_longest_road_suffix(public_state, color, [edge])}",
+            label=f"Build settlement at {settle_desc_with_resources} -> build road {edge}{_road_node_detail(public_state, edge, exclude_nodes={node}, network_nodes={node}, extra_occupied={node}, extra_occupied_color=color)}{_longest_road_suffix(public_state, color, [edge])}",
             actions=[settle, Action(color, ActionType.BUILD_ROAD, edge)],
         )
         for edge in road_options

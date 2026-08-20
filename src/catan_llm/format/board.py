@@ -18,6 +18,7 @@ from catan_llm.format.models import (
     PlayerBoardData,
 )
 from catan_llm.format.utils import get_pip_count
+from collections import Counter
 
 
 def get_adjacent_hex_info(public_state: PublicState, node_id: int) -> tuple[List[AdjacentHexInfo], Optional[str]]:
@@ -376,6 +377,42 @@ def format_board_occupancy_data(occupancy_data: BoardOccupancyData) -> str:
         lines.append(f"  * Roads: Edges [{', '.join(road_strings) if road_strings else 'None'}]")
 
     return "\n".join(lines)
+
+
+def get_starting_resources(public_state: PublicState, node_id: int) -> list[str]:
+    """Return the list of resource names gained for a second initial settlement.
+
+    Mirrors ``apply_build_settlement``'s starting-resource loop: one resource per
+    adjacent non-desert tile. The order follows the map's ``adjacent_tiles``
+    tuple for determinism.
+    """
+    adjacent_hexes, _ = get_adjacent_hex_info(public_state, node_id)
+    return [h.resource for h in adjacent_hexes if h.resource is not None]
+
+
+def format_starting_resources(public_state: PublicState, node_id: int) -> str:
+    """Human-readable starting-resource list for a second settlement.
+
+    Returns a comma-separated list ordered by ``RESOURCES`` (WOOD, BRICK,
+    SHEEP, WHEAT, ORE) with counts for duplicates, e.g. ``"WOOD, BRICK"`` or
+    ``"2 WOOD, 1 BRICK"``. Returns ``"none"`` when the node is desert-adjacent.
+    """
+    from catanatron.models.enums import RESOURCES
+
+    resources = get_starting_resources(public_state, node_id)
+    if not resources:
+        return "none"
+    cnt = Counter(resources)
+    parts: list[str] = []
+    for r in RESOURCES:
+        if r in cnt:
+            c = cnt[r]
+            parts.append(f"{c} {r}" if c > 1 else r)
+    # Any resource not in RESOURCES (should not happen) appended last
+    for r, c in cnt.items():
+        if r not in RESOURCES:
+            parts.append(f"{c} {r}" if c > 1 else r)
+    return ", ".join(parts)
 
 
 def get_board_occupancy(public_state: PublicState) -> str:

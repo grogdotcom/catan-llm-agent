@@ -34,10 +34,12 @@ from catan_llm.format.board import (
     calculate_blocked_production,
     format_board_occupancy_data,
     format_robber_info,
+    format_starting_resources,
     gather_board_occupancy_data,
     get_adjacent_hex_info,
     get_board_occupancy,
     get_full_board_map,
+    get_starting_resources,
 )
 from catan_llm.format.players import (
     get_player_dev_cards,

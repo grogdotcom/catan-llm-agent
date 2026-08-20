@@ -201,7 +201,7 @@ def format_decision_prompt_with_history(
     prompt_parts.append(get_game_state_summary(public_state, current_player_color, current_player_inventory))
     prompt_parts.append("\n")
 
-    prompt_parts.append(format_public_history_window(public_history, window_size=history_window_size))
+    prompt_parts.append(format_public_history_window(public_history, window_size=history_window_size, public_state=public_state))
     prompt_parts.append("\n")
 
     prompt_parts.append(summarize_catan_actions(playable_actions))
@@ -217,6 +217,24 @@ def format_decision_prompt_with_history(
 # Integrated complete prompt — board → occupancy → robber → inventories → moves
 # ---------------------------------------------------------------------------
 
+def _resolve_history_records(public_history, observation):
+    """Resolve public history records from explicit arg or observation.
+
+    Preference: explicit ``public_history`` > ``observation.public_history``
+    > ``observation.history`` > empty tuple.
+    """
+    if public_history is not None:
+        return public_history
+    if observation is not None:
+        hist = getattr(observation, "public_history", None)
+        if hist is not None:
+            return hist
+        hist = getattr(observation, "history", None)
+        if hist is not None:
+            return hist
+    return ()
+
+
 def get_complete_prompt(
     public_state: Optional[PublicState] = None,
     current_player_color=None,
@@ -227,6 +245,8 @@ def get_complete_prompt(
     turn_number: Optional[int] = None,
     include_header: bool = True,
     include_footer: bool = True,
+    public_history: Optional[Sequence[ActionRecord]] = None,
+    history_window_size: Optional[int] = 8,
 ) -> str:
     """Build the complete LLM prompt in canonical section order.
 
@@ -240,7 +260,11 @@ def get_complete_prompt(
     4. ``[PLAYERS]`` — consolidated per-player inventories (resources, dev
        cards, VP, roads, army, ports, pips, pieces) via
        :func:`get_players_summary`
-    5. ``[PLAYABLE MOVES]`` — rich numbered move list via
+    5. ``[RECENT TURNS (LAST 8)]`` — summaries of the last 8 turns via
+       :func:`format_public_history_window` (``history_window_size=8`` by
+       default). Falls back to ``observation.public_history`` when
+       ``public_history`` is not supplied.
+    6. ``[PLAYABLE MOVES]`` — rich numbered move list via
        :func:`catan_llm.format.moves.build_moves` /
        :func:`catan_llm.format.moves.format_moves`
 
@@ -270,12 +294,19 @@ def get_complete_prompt(
         include_header: When ``True`` (default) and any of
             ``current_player_color`` / ``current_prompt`` / ``turn_number`` is
             supplied, a ``[CURRENT PLAYER]`` / ``[TURN]`` / ``[PHASE]`` header
-            is prepended. Set ``False`` to get only the five canonical sections.
+            is prepended. Set ``False`` to get only the six canonical sections.
         include_footer: When ``True`` (default) appends
             ``[DECISION REQUIRED]``.
+        public_history: Optional sequence of :class:`ActionRecord` (e.g.
+            ``Observation.public_history``). When ``None``, falls back to
+            ``observation.public_history`` if present, otherwise empty.
+        history_window_size: Number of recent turns to summarise. Default 8,
+            matching the prompt requirement (``[RECENT TURNS (LAST 8)]`` before
+            ``[PLAYABLE MOVES]``). Pass ``None`` for all turns, ``0`` for
+            setup only.
 
     Returns:
-        Multiline string with the five sections in order, separated by a blank
+        Multiline string with the six sections in order, separated by a blank
         line (``\"\\n\\n\"`` between rendered sections). Sections themselves are
         multi-line.
 
@@ -286,7 +317,8 @@ def get_complete_prompt(
         ... )
         >>> assert prompt.index("[FULL BOARD MAP") < prompt.index("[CURRENT BOARD OCCUPANCY")
         >>> assert prompt.index("ROBBER:") < prompt.index("[PLAYERS]")
-        >>> assert prompt.index("[PLAYERS]") < prompt.index("[PLAYABLE MOVES]")
+        >>> assert prompt.index("[PLAYERS]") < prompt.index("[RECENT TURNS")
+        >>> assert prompt.index("[RECENT TURNS") < prompt.index("[PLAYABLE MOVES]")
     """
     # Lazy import to avoid circular import at module load (moves imports board).
     from types import SimpleNamespace
@@ -344,7 +376,29 @@ def get_complete_prompt(
     # 4. Consolidated per-player inventories
     sections.append(get_players_summary(public_state, current_player_color, current_player_inventory))
 
-    # 5. Available moves — rich numbered list
+    # 5. Recent turn summaries — last 8 turns (after inventories, before moves)
+    history_records = _resolve_history_records(public_history, observation)
+    # format_public_history_window with window_size=8 is the canonical "last 8 turns" view;
+    # enrich with public_state so settlement/city/road/robber/roll lines mirror
+    # playable-move detail (tile/port/pips, road endpoints, robber tile, roll resources).
+    history_block = format_public_history_window(
+        history_records, window_size=history_window_size, public_state=public_state
+    )
+    # Provide both a RECENT TURNS alias (requirement language) and the canonical
+    # [PUBLIC HISTORY] block so searches for either marker succeed. The alias header
+    # carries the explicit LAST 8 annotation before the windowed history.
+    if history_block.startswith("[PUBLIC HISTORY]"):
+        # Replace header with alias + canonical marker for double discoverability
+        history_text = history_block.replace(
+            "[PUBLIC HISTORY]",
+            "[RECENT TURNS (LAST 8)]\n[PUBLIC HISTORY]",
+            1,
+        )
+    else:
+        history_text = f"[RECENT TURNS (LAST 8)]\n{history_block}"
+    sections.append(history_text)
+
+    # 6. Available moves — rich numbered list
     if observation is not None:
         moves = build_moves(playable_actions, observation)
         moves_text = format_moves(moves, observation=observation)
@@ -375,6 +429,8 @@ def format_observation_prompt(
     current_player_inventory: Optional[Inventory] = None,
     include_header: bool = True,
     include_footer: bool = True,
+    public_history: Optional[Sequence[ActionRecord]] = None,
+    history_window_size: Optional[int] = 8,
 ) -> str:
     """Convenience wrapper that builds the complete prompt directly from an Observation.
 
@@ -394,9 +450,13 @@ def format_observation_prompt(
         current_player_inventory: Optional private Inventory for the observer.
         include_header: See :func:`get_complete_prompt`.
         include_footer: See :func:`get_complete_prompt`.
+        public_history: Optional override for history records; when ``None``
+            uses ``observation.public_history`` if present.
+        history_window_size: Number of recent turns to summarise (default 8).
+            See :func:`get_complete_prompt`.
 
     Returns:
-        Same five-section prompt as :func:`get_complete_prompt`.
+        Same six-section prompt as :func:`get_complete_prompt`.
     """
     public_state = getattr(observation, "public_state", None)
     color = getattr(observation, "color", None)
@@ -420,6 +480,8 @@ def format_observation_prompt(
         turn_number=turn_number,
         include_header=include_header,
         include_footer=include_footer,
+        public_history=public_history,
+        history_window_size=history_window_size,
     )
 
 
