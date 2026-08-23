@@ -257,14 +257,17 @@ def get_complete_prompt(
        :func:`gather_board_occupancy_data` + :func:`format_board_occupancy_data`
     3. ``ROBBER:`` — robber tile + blocked production via
        :func:`format_robber_info` (computed from the same occupancy)
-    4. ``[PLAYERS]`` — consolidated per-player inventories (resources, dev
+    4. ``[CURRENT PLAYER]`` / ``[TURN]`` / ``[PHASE]`` header — when
+       ``include_header`` and identity/phase context is supplied, inserted
+       directly below the robber line
+    5. ``[PLAYERS]`` — consolidated per-player inventories (resources, dev
        cards, VP, roads, army, ports, pips, pieces) via
        :func:`get_players_summary`
-    5. ``[RECENT TURNS (LAST 8)]`` — summaries of the last 8 turns via
+    6. ``[RECENT TURNS (LAST 8)]`` — summaries of the last 8 turns via
        :func:`format_public_history_window` (``history_window_size=8`` by
        default). Falls back to ``observation.public_history`` when
        ``public_history`` is not supplied.
-    6. ``[PLAYABLE MOVES]`` — rich numbered move list via
+    7. ``[PLAYABLE MOVES]`` — rich numbered move list via
        :func:`catan_llm.format.moves.build_moves` /
        :func:`catan_llm.format.moves.format_moves`
 
@@ -294,7 +297,8 @@ def get_complete_prompt(
         include_header: When ``True`` (default) and any of
             ``current_player_color`` / ``current_prompt`` / ``turn_number`` is
             supplied, a ``[CURRENT PLAYER]`` / ``[TURN]`` / ``[PHASE]`` header
-            is prepended. Set ``False`` to get only the six canonical sections.
+            is inserted directly below the ``ROBBER:`` line (between robber and
+            ``[PLAYERS]``). Set ``False`` to get only the canonical sections.
         include_footer: When ``True`` (default) appends
             ``[DECISION REQUIRED]``.
         public_history: Optional sequence of :class:`ActionRecord` (e.g.
@@ -306,9 +310,11 @@ def get_complete_prompt(
             setup only.
 
     Returns:
-        Multiline string with the six sections in order, separated by a blank
-        line (``\"\\n\\n\"`` between rendered sections). Sections themselves are
-        multi-line.
+        Multiline string with the canonical sections in order, separated by a
+        blank line (``\"\\n\\n\"`` between rendered sections). Sections
+        themselves are multi-line. When ``include_header`` is enabled the
+        player/turn/phase header appears directly below ``ROBBER:`` and before
+        ``[PLAYERS]``.
 
     Example:
         >>> prompt = get_complete_prompt(
@@ -316,7 +322,8 @@ def get_complete_prompt(
         ...     inventory, observation=obs, turn_number=12
         ... )
         >>> assert prompt.index("[FULL BOARD MAP") < prompt.index("[CURRENT BOARD OCCUPANCY")
-        >>> assert prompt.index("ROBBER:") < prompt.index("[PLAYERS]")
+        >>> assert prompt.index("ROBBER:") < prompt.index("[CURRENT PLAYER")
+        >>> assert prompt.index("[CURRENT PLAYER") < prompt.index("[PLAYERS]")
         >>> assert prompt.index("[PLAYERS]") < prompt.index("[RECENT TURNS")
         >>> assert prompt.index("[RECENT TURNS") < prompt.index("[PLAYABLE MOVES]")
     """
@@ -353,7 +360,14 @@ def get_complete_prompt(
 
     sections: List[str] = []
 
-    # Optional header — only when caller supplied identity/phase context.
+    # 1. Static board map
+    sections.append(get_full_board_map(public_state))
+    # 2. Dynamic occupancy (settlements / cities / roads, no robber)
+    sections.append(format_board_occupancy_data(occupancy_data))
+    # 3. Robber (tile detail + blocked production derived from same occupancy)
+    sections.append(format_robber_info(public_state, occupancy_data.players))
+
+    # Header — placed below robber info (after board map / occupancy / robber)
     if include_header and (current_player_color is not None or resolved_prompt is not None or turn_number is not None):
         header_lines: List[str] = []
         if current_player_color is not None:
@@ -367,12 +381,6 @@ def get_complete_prompt(
         if header_lines:
             sections.append("\n".join(header_lines))
 
-    # 1. Static board map
-    sections.append(get_full_board_map(public_state))
-    # 2. Dynamic occupancy (settlements / cities / roads, no robber)
-    sections.append(format_board_occupancy_data(occupancy_data))
-    # 3. Robber (tile detail + blocked production derived from same occupancy)
-    sections.append(format_robber_info(public_state, occupancy_data.players))
     # 4. Consolidated per-player inventories
     sections.append(get_players_summary(public_state, current_player_color, current_player_inventory))
 

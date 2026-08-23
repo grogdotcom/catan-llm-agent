@@ -504,8 +504,10 @@ def test_get_complete_prompt_header_includes_player_turn_phase():
     assert "[CURRENT PLAYER: BLUE]" in out
     assert "[TURN: 12]" in out
     assert "[PHASE: PLAY_TURN]" in out
-    # header is first section before board
-    assert out.index("[CURRENT PLAYER") < out.index("[FULL BOARD MAP")
+    # header is now directly below robber and before players
+    assert out.index("[FULL BOARD MAP") < out.index("[CURRENT PLAYER")
+    assert out.index("ROBBER:") < out.index("[CURRENT PLAYER")
+    assert out.index("[CURRENT PLAYER") < out.index("[PLAYERS]")
 
 
 def test_get_complete_prompt_include_header_false_omits_header():
