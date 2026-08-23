@@ -721,9 +721,12 @@ def _setup_settlement_moves(settle: Action, public_state: PublicState) -> List[M
     settle_desc = _describe_node(public_state, node)
     # Append starting resources right after the settlement description, before the road.
     settle_desc_with_resources = f"{settle_desc}{starting_suffix}"
+    # Longest-road hint is intentionally omitted for initial placement:
+    # it is always 0 -> 1 (+1) at this stage (needs 5 to claim) and just
+    # bloats every one of the ~60-110 options without signal.
     return [
         Move(
-            label=f"Build settlement at {settle_desc_with_resources} -> build road {edge}{_road_node_detail(public_state, edge, exclude_nodes={node}, network_nodes={node}, extra_occupied={node}, extra_occupied_color=color)}{_longest_road_suffix(public_state, color, [edge])}",
+            label=f"Build settlement at {settle_desc_with_resources} -> build road {edge}{_road_node_detail(public_state, edge, exclude_nodes={node}, network_nodes={node}, extra_occupied={node}, extra_occupied_color=color)}",
             actions=[settle, Action(color, ActionType.BUILD_ROAD, edge)],
         )
         for edge in road_options

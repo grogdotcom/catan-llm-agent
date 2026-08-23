@@ -475,19 +475,20 @@ def test_build_moves_buy_dev_card_exact():
 
 
 def test_build_moves_initial_settlement_exact():
-    # Uses tiny mock to hard-code expected settlement+road + longest suffix
+    # Uses tiny mock to hard-code expected settlement+road (longest-road omitted for initial placement)
     ps = _mock_public_state_for_node5()
     a = Action(Color.RED, ActionType.BUILD_SETTLEMENT, 0)
     from catan_llm.format import _setup_settlement_moves
     moves = _setup_settlement_moves(a, ps)
-    # First road is (0,1) — exact string from earlier manual run
+    # First road is (0,1) — longest-road hint is intentionally omitted for BUILD_INITIAL_SETTLEMENT
     expected = (
         "Build settlement at Node 0: (Tile 0: 8 WOOD (5 pips)) Total: 5 pips -> build road (0, 1) "
         "| reaches Node 1: (Tile 0: 8 WOOD (5 pips)) Total: 5 pips [blocked (too close to RED settlement at Node 0)] "
         "| extends toward Node 2: (no resource tiles) Total: 0 pips [blocked (water/non-land)], "
-        "Node 6: (Tile 1: 6 WOOD (5 pips)) Total: 5 pips [available] | Longest road: 0 -> 1 (+1)"
+        "Node 6: (Tile 1: 6 WOOD (5 pips)) Total: 5 pips [available]"
     )
     assert moves[0].label == expected
+    assert "Longest road" not in moves[0].label
 
 
 def test_build_moves_knight_bundling_exact():
