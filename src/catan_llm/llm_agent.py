@@ -113,7 +113,14 @@ class LLMObservationAgent(ObservationAgent):
         move = parse_move(response, moves)
         return self.executor.submit(move)
 
-    def build_full_prompt(self, observation, playable_actions, current_player_inventory=None) -> str:
+    def build_full_prompt(
+        self,
+        observation,
+        playable_actions,
+        current_player_inventory=None,
+        include_footer: bool = True,
+        footer: Optional[str] = None,
+    ) -> str:
         """Build the integrated six-section prompt for this observation.
 
         Order is board → occupancy → robber → inventories → recent turns (last 8)
@@ -131,6 +138,12 @@ class LLMObservationAgent(ObservationAgent):
                 observer. When ``None``, attempts to use ``observation.inventory``
                 / ``observation.player_state`` if available, otherwise renders
                 the observer as hidden.
+            include_footer: See :func:`catan_llm.format.get_complete_prompt`.
+                Set ``False`` to omit the default ``[DECISION REQUIRED]`` suffix.
+            footer: See :func:`catan_llm.format.get_complete_prompt`. Custom
+                text appended after ``[PLAYABLE MOVES]``. When provided it
+                overrides ``include_footer``. Example for chain-of-thought:
+                ``footer="[THINK]\\nExplain your reasoning, then output the move number."``.
 
         Returns:
             Complete prompt string. See :func:`catan_llm.format.get_complete_prompt`.
@@ -155,6 +168,8 @@ class LLMObservationAgent(ObservationAgent):
             observation=observation,
             current_prompt=getattr(observation, "current_prompt", None),
             turn_number=turn_number,
+            include_footer=include_footer,
+            footer=footer,
         )
 
     def choose_move(self, formatted_moves: str, observation) -> str:

@@ -127,7 +127,20 @@ def summarize_catan_actions(valid_actions: List) -> str:
     return "\n".join(summary_lines)
 
 
-def format_decision_prompt(public_state: PublicState, playable_actions: List, current_player_color: str, current_prompt: ActionPrompt, turn_number: int, current_player_inventory: Optional[Inventory] = None) -> str:
+DEFAULT_DECISION_FOOTER = "[DECISION REQUIRED]\nSelect the best action from the available options above."
+DEFAULT_COMPLETE_FOOTER = "[DECISION REQUIRED]\nSelect the best action from the available moves above."
+
+
+def format_decision_prompt(
+    public_state: PublicState,
+    playable_actions: List,
+    current_player_color: str,
+    current_prompt: ActionPrompt,
+    turn_number: int,
+    current_player_inventory: Optional[Inventory] = None,
+    footer: Optional[str] = None,
+    include_footer: bool = True,
+) -> str:
     """
     Create a complete decision prompt for LLM consumption.
     Combines game state summary with available actions.
@@ -139,6 +152,13 @@ def format_decision_prompt(public_state: PublicState, playable_actions: List, cu
         current_prompt: The current action prompt (phase)
         turn_number: The current turn number
         current_player_inventory: Optional Inventory object for current player
+        footer: Optional custom footer appended after the moves block. When
+            provided (including ``""``), it is used verbatim and
+            ``include_footer`` is ignored. Pass ``None`` to use
+            ``include_footer`` / the default ``[DECISION REQUIRED]`` text.
+        include_footer: When ``True`` (default) appends the default
+            ``[DECISION REQUIRED]`` footer. Set ``False`` to omit, or pass
+            ``footer`` for a custom suffix.
 
     Returns:
         str: Complete decision prompt for LLM consumption
@@ -156,8 +176,11 @@ def format_decision_prompt(public_state: PublicState, playable_actions: List, cu
     prompt_parts.append(summarize_catan_actions(playable_actions))
     prompt_parts.append("\n")
 
-    prompt_parts.append("[DECISION REQUIRED]")
-    prompt_parts.append("Select the best action from the available options above.")
+    if footer is not None:
+        if footer:
+            prompt_parts.append(footer)
+    elif include_footer:
+        prompt_parts.append(DEFAULT_DECISION_FOOTER)
 
     return "\n".join(prompt_parts)
 
@@ -171,6 +194,8 @@ def format_decision_prompt_with_history(
     public_history: Sequence[ActionRecord],
     history_window_size: Optional[int] = None,
     current_player_inventory: Optional[Inventory] = None,
+    footer: Optional[str] = None,
+    include_footer: bool = True,
 ) -> str:
     """
     Create a complete decision prompt for LLM consumption with public history.
@@ -187,6 +212,13 @@ def format_decision_prompt_with_history(
         history_window_size: Optional number of recent turns to include in history.
             If None, includes all turns. If 0, only includes setup phase.
         current_player_inventory: Optional Inventory object for current player
+        footer: Optional custom footer appended after the moves block. When
+            provided (including ``""``), it is used verbatim and
+            ``include_footer`` is ignored. Pass ``None`` to use
+            ``include_footer`` / the default ``[DECISION REQUIRED]`` text.
+        include_footer: When ``True`` (default) appends the default
+            ``[DECISION REQUIRED]`` footer. Set ``False`` to omit, or pass
+            ``footer`` for a custom suffix.
 
     Returns:
         str: Complete decision prompt for LLM consumption with history
@@ -207,8 +239,11 @@ def format_decision_prompt_with_history(
     prompt_parts.append(summarize_catan_actions(playable_actions))
     prompt_parts.append("\n")
 
-    prompt_parts.append("[DECISION REQUIRED]")
-    prompt_parts.append("Select the best action from the available options above.")
+    if footer is not None:
+        if footer:
+            prompt_parts.append(footer)
+    elif include_footer:
+        prompt_parts.append(DEFAULT_DECISION_FOOTER)
 
     return "\n".join(prompt_parts)
 
@@ -245,6 +280,7 @@ def get_complete_prompt(
     turn_number: Optional[int] = None,
     include_header: bool = True,
     include_footer: bool = True,
+    footer: Optional[str] = None,
     public_history: Optional[Sequence[ActionRecord]] = None,
     history_window_size: Optional[int] = 8,
 ) -> str:
@@ -299,8 +335,14 @@ def get_complete_prompt(
             supplied, a ``[CURRENT PLAYER]`` / ``[TURN]`` / ``[PHASE]`` header
             is inserted directly below the ``ROBBER:`` line (between robber and
             ``[PLAYERS]``). Set ``False`` to get only the canonical sections.
-        include_footer: When ``True`` (default) appends
-            ``[DECISION REQUIRED]``.
+        include_footer: When ``True`` (default) appends the default
+            ``[DECISION REQUIRED]`` footer. Set ``False`` to omit, or pass
+            ``footer`` for a custom suffix. Ignored when ``footer`` is not
+            ``None``.
+        footer: Optional custom footer appended after ``[PLAYABLE MOVES]``. When
+            provided (including ``""``), it is used verbatim and
+            ``include_footer`` is ignored. Use ``""`` or ``include_footer=False``
+            to omit any suffix. Example: ``footer="[THINK]\\nExplain…"``.
         public_history: Optional sequence of :class:`ActionRecord` (e.g.
             ``Observation.public_history``). When ``None``, falls back to
             ``observation.public_history`` if present, otherwise empty.
@@ -314,7 +356,8 @@ def get_complete_prompt(
         blank line (``\"\\n\\n\"`` between rendered sections). Sections
         themselves are multi-line. When ``include_header`` is enabled the
         player/turn/phase header appears directly below ``ROBBER:`` and before
-        ``[PLAYERS]``.
+        ``[PLAYERS]``. The prompt ends at ``[PLAYABLE MOVES]`` when no footer
+        is requested.
 
     Example:
         >>> prompt = get_complete_prompt(
@@ -418,8 +461,11 @@ def get_complete_prompt(
         moves_text = format_moves(moves, observation=shim)
     sections.append(moves_text)
 
-    if include_footer:
-        sections.append("[DECISION REQUIRED]\nSelect the best action from the available moves above.")
+    if footer is not None:
+        if footer:
+            sections.append(footer)
+    elif include_footer:
+        sections.append(DEFAULT_COMPLETE_FOOTER)
 
     return "\n\n".join(sections)
 
@@ -437,6 +483,7 @@ def format_observation_prompt(
     current_player_inventory: Optional[Inventory] = None,
     include_header: bool = True,
     include_footer: bool = True,
+    footer: Optional[str] = None,
     public_history: Optional[Sequence[ActionRecord]] = None,
     history_window_size: Optional[int] = 8,
 ) -> str:
@@ -449,6 +496,10 @@ def format_observation_prompt(
     This is the most ergonomic entry point for an ``ObservationAgent``:
 
     >>> prompt = format_observation_prompt(observation, playable_actions, inventory)
+    >>> # custom endings:
+    >>> prompt = format_observation_prompt(obs, playable, footer="[THINK]\\nExplain then pick.")
+    >>> prompt = format_observation_prompt(obs, playable, include_footer=False)  # no footer
+    >>> prompt = format_observation_prompt(obs, playable, footer="")  # also no footer
 
     Args:
         observation: Observation object (must have ``public_state``; ideally also
@@ -458,6 +509,7 @@ def format_observation_prompt(
         current_player_inventory: Optional private Inventory for the observer.
         include_header: See :func:`get_complete_prompt`.
         include_footer: See :func:`get_complete_prompt`.
+        footer: See :func:`get_complete_prompt`.
         public_history: Optional override for history records; when ``None``
             uses ``observation.public_history`` if present.
         history_window_size: Number of recent turns to summarise (default 8).
@@ -488,6 +540,7 @@ def format_observation_prompt(
         turn_number=turn_number,
         include_header=include_header,
         include_footer=include_footer,
+        footer=footer,
         public_history=public_history,
         history_window_size=history_window_size,
     )
