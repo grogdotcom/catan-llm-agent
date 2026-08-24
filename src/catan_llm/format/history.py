@@ -12,6 +12,7 @@ from catanatron.models.enums import ActionRecord, ActionType, RESOURCES
 
 from catan_llm.format.models import _SETUP_ACTION_TYPES
 from catan_llm.format.utils import (
+    _abbr_resource,
     _format_maritime_trade_value,
     _format_resource_counts,
     _format_trade_offer_value,
@@ -75,29 +76,28 @@ def _describe_roll_resources(public_state, dice_total: int) -> str:
                 for _ in range(count):
                     gains[owner_name].append(resource_name)
 
-    # Format gains part
+    # Format gains part — abbreviated resources
     parts = []
     for owner in sorted(gains.keys()):
         cnt = Counter(gains[owner])
         ordered = [r for r in RESOURCES if r in cnt]
-        inner = ", ".join(f"{cnt[r]} {r}" for r in ordered)
+        inner = ", ".join(f"{cnt[r]} {_abbr_resource(r)}" for r in ordered)
         parts.append(f"{owner} +{inner}")
 
-    # Format blocked part — simple "BLOCKED ORANGE 1 WOOD" style
     blocked_parts = []
     for owner in sorted(blocked_gains.keys()):
         cnt = Counter(blocked_gains[owner])
         ordered = [r for r in RESOURCES if r in cnt]
-        inner = ", ".join(f"{cnt[r]} {r}" for r in ordered)
+        inner = ", ".join(f"{cnt[r]} {_abbr_resource(r)}" for r in ordered)
         blocked_parts.append(f"{owner} {inner}")
 
     if gains and blocked_parts:
-        return " — " + "; ".join(parts) + f" - BLOCKED {', '.join(blocked_parts)}"
+        return " — " + "; ".join(parts) + f" - blk {', '.join(blocked_parts)}"
     if gains:
         return " — " + "; ".join(parts)
     if blocked_parts:
-        return f" — BLOCKED {', '.join(blocked_parts)}"
-    return " — no resources (no settlements on roll)"
+        return f" — blk {', '.join(blocked_parts)}"
+    return " — no resources"
 
 
 def describe_action_record(record: ActionRecord, public_state=None) -> str:
@@ -144,10 +144,10 @@ def describe_action_record(record: ActionRecord, public_state=None) -> str:
                 from catan_llm.format.moves import _describe_node
 
                 node_desc = _describe_node(public_state, value)
-                return f"{color} built settlement at {node_desc}"
+                return f"{color} built S {node_desc}"
             except Exception:
                 pass
-        return f"{color} built settlement at node {value}"
+        return f"{color} built S Node {value}"
 
     if action_type == ActionType.BUILD_CITY:
         if public_state is not None:
@@ -155,28 +155,14 @@ def describe_action_record(record: ActionRecord, public_state=None) -> str:
                 from catan_llm.format.moves import _describe_node
 
                 node_desc = _describe_node(public_state, value)
-                return f"{color} built city at {node_desc}"
+                return f"{color} built C {node_desc}"
             except Exception:
                 pass
-        return f"{color} built city at node {value}"
+        return f"{color} built C Node {value}"
 
     if action_type == ActionType.BUILD_ROAD:
         edge = tuple(sorted(value)) if value is not None else value
-        if public_state is not None and edge is not None:
-            try:
-                from catan_llm.format.moves import _describe_node
-
-                # History road: show both endpoint nodes with tile/port/pips
-                # (mirrors playable-move node detail but without prospective
-                # reachability that would depend on the *current* board's future
-                # buildings — e.g., a setup road should not show as blocked by a
-                # city that was built later).
-                a_desc = _describe_node(public_state, edge[0])
-                b_desc = _describe_node(public_state, edge[1])
-                return f"{color} built road on edge {edge} | connects {a_desc} <-> {b_desc}"
-            except Exception:
-                pass
-        return f"{color} built road on edge {edge}"
+        return f"{color} built road {edge}"
 
     if action_type == ActionType.BUY_DEVELOPMENT_CARD:
         card = result if result is not None else value
@@ -217,19 +203,19 @@ def describe_action_record(record: ActionRecord, public_state=None) -> str:
 
     if action_type == ActionType.DISCARD_RESOURCE:
         discarded = result if result is not None else value
-        return f"{color} discarded {_name_of(discarded)}"
+        return f"{color} discarded {_abbr_resource(_name_of(discarded))}"
 
     if action_type == ActionType.PLAY_KNIGHT_CARD:
         return f"{color} played Knight"
 
     if action_type == ActionType.PLAY_YEAR_OF_PLENTY:
         if value is None:
-            return f"{color} played Year of Plenty"
-        cards = ", ".join(_name_of(r) for r in value)
-        return f"{color} played Year of Plenty: took {cards}"
+            return f"{color} played YOP"
+        cards = ", ".join(_abbr_resource(_name_of(r)) for r in value)
+        return f"{color} played YOP: took {cards}"
 
     if action_type == ActionType.PLAY_MONOPOLY:
-        return f"{color} played Monopoly on {_name_of(value)}"
+        return f"{color} played Monopoly on {_abbr_resource(_name_of(value))}"
 
     if action_type == ActionType.PLAY_ROAD_BUILDING:
         return f"{color} played Road Building"
@@ -379,8 +365,8 @@ def describe_turn(
             order: list[str] = []
             for rec in batch:
                 color = _name_of(rec.action.color)
-                # result holds revealed resource for self; value is fallback
-                res = _name_of(rec.result if rec.result is not None else rec.action.value)
+                res_raw = _name_of(rec.result if rec.result is not None else rec.action.value)
+                res = _abbr_resource(res_raw)
                 if color not in per_color:
                     per_color[color] = []
                     order.append(color)
@@ -388,16 +374,14 @@ def describe_turn(
             for color in order:
                 resources = per_color[color]
                 if len(resources) == 1:
-                    # single discard keeps original phrasing to avoid churn
                     lines.append(f"  - {color} discarded {resources[0]}")
                 else:
                     counts = Counter(resources)
-                    # preserve first-appearance order for summary (matches example: WOOD, WHEAT, SHEEP)
                     seen: list[str] = []
                     for r in resources:
                         if r not in seen:
                             seen.append(r)
-                    summary = ", ".join(f"{r}: {counts[r]}" for r in seen)
+                    summary = ", ".join(f"{r}:{counts[r]}" for r in seen)
                     res_str = ", ".join(resources)
                     lines.append(f"  - {color} discarded {res_str} ({summary})")
             i = j

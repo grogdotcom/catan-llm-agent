@@ -17,7 +17,7 @@ from typing import Dict, List, Optional
 from catanatron.models.inventory import Inventory
 from catanatron.models.public_state import PublicState
 
-from catan_llm.format.utils import _name_of
+from catan_llm.format.utils import _abbr_resource, _name_of
 
 
 def get_player_resources(public_state: PublicState, current_player_color, current_player_inventory: Optional[Inventory] = None) -> str:
@@ -149,56 +149,69 @@ def _format_resources_for_overview(player_data, inventory: Optional[Inventory], 
     if is_current and inventory is not None:
         parts = []
         if inventory.wood > 0:
-            parts.append(f"WOOD: {inventory.wood}")
+            parts.append(f"Wd:{inventory.wood}")
         if inventory.brick > 0:
-            parts.append(f"BRICK: {inventory.brick}")
+            parts.append(f"Br:{inventory.brick}")
         if inventory.sheep > 0:
-            parts.append(f"SHEEP: {inventory.sheep}")
+            parts.append(f"Sh:{inventory.sheep}")
         if inventory.wheat > 0:
-            parts.append(f"WHEAT: {inventory.wheat}")
+            parts.append(f"Wh:{inventory.wheat}")
         if inventory.ore > 0:
-            parts.append(f"ORE: {inventory.ore}")
+            parts.append(f"Or:{inventory.ore}")
         return ", ".join(parts) if parts else "No resources"
     # Hidden for opponents / when inventory unavailable
-    return f"{player_data.hand_resource_count} resource cards (hidden)"
+    return f"{player_data.hand_resource_count}c hidden"
+
+
+_DEV_ABBR = {
+    "KNIGHT": "Kn",
+    "YEAR_OF_PLENTY": "YOP",
+    "MONOPOLY": "Mo",
+    "ROAD_BUILDING": "RB",
+    "VICTORY_POINT": "VP",
+}
+
+
+def _abbr_dev(name: str) -> str:
+    return _DEV_ABBR.get(name, name)
 
 
 def _format_dev_for_overview(player_data, inventory: Optional[Inventory], is_current: bool) -> str:
     """Return the dev-card fragment for one player in the consolidated view."""
-    # Collect played (always public)
+    # Collect played (always public) — abbreviated
     played = []
     if player_data.played_knight > 0:
-        played.append(f"KNIGHT: {player_data.played_knight}")
+        played.append(f"Kn:{player_data.played_knight}")
     if player_data.played_year_of_plenty > 0:
-        played.append(f"YEAR_OF_PLENTY: {player_data.played_year_of_plenty}")
+        played.append(f"YOP:{player_data.played_year_of_plenty}")
     if player_data.played_monopoly > 0:
-        played.append(f"MONOPOLY: {player_data.played_monopoly}")
+        played.append(f"Mo:{player_data.played_monopoly}")
     if player_data.played_road_building > 0:
-        played.append(f"ROAD_BUILDING: {player_data.played_road_building}")
+        played.append(f"RB:{player_data.played_road_building}")
     if player_data.played_victory_point > 0:
-        played.append(f"VICTORY_POINT: {player_data.played_victory_point}")
+        played.append(f"VP:{player_data.played_victory_point}")
     played_str = ", ".join(played) if played else None
 
     if is_current and inventory is not None:
         held = []
         if inventory.knight > 0:
-            held.append(f"KNIGHT: {inventory.knight}")
+            held.append(f"Kn:{inventory.knight}")
         if inventory.year_of_plenty > 0:
-            held.append(f"YEAR_OF_PLENTY: {inventory.year_of_plenty}")
+            held.append(f"YOP:{inventory.year_of_plenty}")
         if inventory.monopoly > 0:
-            held.append(f"MONOPOLY: {inventory.monopoly}")
+            held.append(f"Mo:{inventory.monopoly}")
         if inventory.road_building > 0:
-            held.append(f"ROAD_BUILDING: {inventory.road_building}")
+            held.append(f"RB:{inventory.road_building}")
         if inventory.victory_point > 0:
-            held.append(f"VICTORY_POINT: {inventory.victory_point}")
-        held_str = ", ".join(held) if held else "No dev cards"
+            held.append(f"VP:{inventory.victory_point}")
+        held_str = ", ".join(held) if held else "No dev"
         if played_str:
-            return f"{held_str} (Played: {played_str})"
+            return f"{held_str} (Pd:{played_str})"
         return held_str
     # Opponents / no inventory: hidden count + played
-    hidden = f"{player_data.hand_dev_count} dev cards (hidden)"
+    hidden = f"{player_data.hand_dev_count}d hidden"
     if played_str:
-        return f"{hidden} (Played: {played_str})"
+        return f"{hidden} (Pd:{played_str})"
     return hidden
 
 
@@ -260,23 +273,24 @@ def _format_pieces_for_overview(player_data) -> str:
 
 
 def _format_ports_for_overview(board_player) -> str:
-    """Ports controlled by a player (from occupancy)."""
+    """Ports controlled by a player (from occupancy). Abbreviated."""
     if board_player is None:
         return "None"
     ports: List[str] = []
     for b in board_player.settlements + board_player.cities:
         if b.port:
-            ports.append(b.port)
+            ports.append(_abbr_resource(b.port))
+    # Normalize 3:1 stays "3:1"
     uniq = sorted(set(ports))
     return ", ".join(uniq) if uniq else "None"
 
 
 def _format_pips_for_overview(board_player) -> str:
-    """Pip production: total and per-resource (cities count double)."""
+    """Pip production: total and per-resource (cities count double). Abbreviated."""
     if board_player is None or (not board_player.settlements and not board_player.cities):
         return "0"
-    # Order matters for deterministic output: WOOD, BRICK, SHEEP, WHEAT, ORE
     resource_order = ["WOOD", "BRICK", "SHEEP", "WHEAT", "ORE"]
+    abbr_order = ["Wd", "Br", "Sh", "Wh", "Or"]
     resource_pips: Dict[str, int] = {r: 0 for r in resource_order}
     total = 0
     for b in board_player.settlements:
@@ -291,7 +305,7 @@ def _format_pips_for_overview(board_player) -> str:
                 resource_pips[hx.resource] += hx.pips * 2
     if total == 0:
         return "0"
-    parts = [f"{r}: {resource_pips[r]}" for r in resource_order if resource_pips[r] > 0]
+    parts = [f"{abbr}:{resource_pips[res]}" for res, abbr in zip(resource_order, abbr_order) if resource_pips[res] > 0]
     if parts:
         return f"{total} ({', '.join(parts)})"
     return f"{total}"

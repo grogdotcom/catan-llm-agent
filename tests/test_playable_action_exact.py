@@ -13,14 +13,14 @@ and the enriched details added for settlements/cities/roads/robber/longest-road.
 
 import sys
 import os
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "venv/lib/python3.14/site-packages"))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../..", "src"))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../venv/lib/python3.14/site-packages"))
 
 import pytest
 from catanatron.models.enums import Action, ActionType
 from catanatron.models.player import Color
 from catanatron.models.board import STATIC_GRAPH
-from catan_llm.format import (
+from catan_llm.format.moves import (
     _label_action,
     build_moves,
     format_moves,
@@ -127,17 +127,17 @@ def test_label_end_turn_exact():
 def test_label_build_road_simple_exact():
     a = Action(Color.RED, ActionType.BUILD_ROAD, (5, 0))
     # edge is sorted
-    assert _label_action(a, None) == "Build road on edge (0, 5)"
+    assert _label_action(a, None) == "Road (0, 5)"
 
 
 def test_label_build_settlement_simple_exact():
     a = Action(Color.RED, ActionType.BUILD_SETTLEMENT, 12)
-    assert _label_action(a, None) == "Build settlement at node 12"
+    assert _label_action(a, None) == "Settlement Node 12"
 
 
 def test_label_build_city_simple_exact():
     a = Action(Color.RED, ActionType.BUILD_CITY, 12)
-    assert _label_action(a, None) == "Build city at node 12"
+    assert _label_action(a, None) == "City Node 12"
 
 
 def test_label_buy_dev_card_exact():
@@ -184,37 +184,37 @@ def test_label_discard_exact():
 def test_label_maritime_trade_exact():
     # 4 WOOD -> BRICK
     a = Action(Color.RED, ActionType.MARITIME_TRADE, ("WOOD", "WOOD", "WOOD", "WOOD", "BRICK"))
-    assert _label_action(a, None) == "Maritime trade: gives [WOOD, WOOD, WOOD, WOOD] to bank for BRICK"
+    assert _label_action(a, None) == "Maritime trade: gives [Wd, Wd, Wd, Wd] to bank for Br"
 
 
 def test_label_maritime_trade_port_exact():
     a = Action(Color.RED, ActionType.MARITIME_TRADE, ("ORE", "ORE", None, None, "WOOD"))
-    assert _label_action(a, None) == "Maritime trade: gives [ORE, ORE] to bank for WOOD"
+    assert _label_action(a, None) == "Maritime trade: gives [Or, Or] to bank for Wd"
 
 
 def test_label_offer_trade_exact():
     offer = (1, 0, 0, 0, 0, 0, 1, 0, 0, 0)  # 1 WOOD for 1 BRICK
     a = Action(Color.RED, ActionType.OFFER_TRADE, offer)
-    assert _label_action(a, None) == "Offer trade: offers [1 WOOD] for [1 BRICK]"
+    assert _label_action(a, None) == "Offer trade: offers [1 Wd] for [1 Br]"
 
 
 def test_label_accept_trade_exact():
     offer = (1, 0, 0, 0, 0, 0, 1, 0, 0, 0)
     a = Action(Color.BLUE, ActionType.ACCEPT_TRADE, offer)
-    assert _label_action(a, None) == "Accept trade: offers [1 WOOD] for [1 BRICK]"
+    assert _label_action(a, None) == "Accept trade: offers [1 Wd] for [1 Br]"
 
 
 def test_label_reject_trade_exact():
     offer = (1, 0, 0, 0, 0, 0, 1, 0, 0, 0)
     a = Action(Color.BLUE, ActionType.REJECT_TRADE, offer)
-    assert _label_action(a, None) == "Reject trade: offers [1 WOOD] for [1 BRICK]"
+    assert _label_action(a, None) == "Reject trade: offers [1 Wd] for [1 Br]"
 
 
 def test_label_confirm_trade_exact():
     offer = (1, 0, 0, 0, 0, 0, 1, 0, 0, 0)
     confirm = offer + (Color.BLUE,)
     a = Action(Color.RED, ActionType.CONFIRM_TRADE, confirm)
-    assert _label_action(a, None) == "Confirm trade with BLUE: offers [1 WOOD] for [1 BRICK]"
+    assert _label_action(a, None) == "Confirm trade with BLUE: offers [1 Wd] for [1 Br]"
 
 
 def test_label_cancel_trade_exact():
@@ -238,14 +238,14 @@ def test_label_build_settlement_enriched_exact():
     ps = _mock_public_state_for_node5()
     a = Action(Color.RED, ActionType.BUILD_SETTLEMENT, 5)
     # Node 5 touches Tile0: 8 WOOD (5 pips), Tile1: 6 WOOD (5 pips) => total 10
-    assert _label_action(a, ps) == "Build settlement at Node 5: (Tile 0: 8 WOOD (5 pips)), (Tile 1: 6 WOOD (5 pips)) Total: 10 pips"
+    assert _label_action(a, ps) == "Settlement Node 5 [8-Wd, 6-Wd | 10p]"
 
 
 def test_label_build_city_enriched_exact():
     ps = _mock_public_state_for_node5()
     a = Action(Color.RED, ActionType.BUILD_CITY, 0)
     # Node 0: only Tile0
-    assert _label_action(a, ps) == "Build city at Node 0: (Tile 0: 8 WOOD (5 pips)) Total: 5 pips"
+    assert _label_action(a, ps) == "City Node 0 [8-Wd | 5p]"
 
 
 def test_label_build_road_enriched_exact_with_longest():
@@ -261,11 +261,7 @@ def test_label_build_road_enriched_exact_with_longest():
     # Node0: Tile0 only => (Tile 0: 8 WOOD (5 pips)) Total:5
     # Node1: Tile0 only => same
     # Node20: no adjacent tiles in mock => "(no resource tiles)" Total:0 but actually 20 not in adjacent_tiles, so no resource tiles
-    expected = (
-        "Build road on edge (0, 5) | reaches Node 0: (Tile 0: 8 WOOD (5 pips)) Total: 5 pips [available] "
-        "| extends toward Node 1: (Tile 0: 8 WOOD (5 pips)) Total: 5 pips [available], "
-        "Node 20: (no resource tiles) Total: 0 pips [available] | Longest road: 0 -> 1 (+1)"
-    )
+    expected = "Road (0, 5) -> Targets: Node 1 [5p]✓, Node 20 [0p]✓ | LR 0->1(+1)"
     assert label == expected
 
 
@@ -274,14 +270,14 @@ def test_label_move_robber_enriched_exact():
     # Tile 0 (0,0,0) WOOD 8 touches Node0 (RED) and Node1 (BLUE)
     a = Action(Color.RED, ActionType.MOVE_ROBBER, ((0, 0, 0), None))
     label = _label_action(a, ps)
-    assert label == "Move robber to Tile 0: 8 WOOD (5 pips) | Occupants: BLUE: settlement at Node 1 (5 pips) | 5 pips blocked, 3 cards; RED: settlement at Node 0 (5 pips) | 5 pips blocked, 2 cards (no steal)"
+    assert label == "Move robber to Tile 0: 8-Wd(5p) | BLUE settlement@N1(5p) 5p blk,3c; RED settlement@N0(5p) 5p blk,2c (no steal)"
 
 
 def test_label_move_robber_enriched_steal_exact():
     ps = _mock_public_state_with_settlements()
     a = Action(Color.RED, ActionType.MOVE_ROBBER, ((0, 0, 0), Color.BLUE))
     label = _label_action(a, ps)
-    assert label == "Move robber to Tile 0: 8 WOOD (5 pips) | Occupants: BLUE: settlement at Node 1 (5 pips) | 5 pips blocked, 3 cards; RED: settlement at Node 0 (5 pips) | 5 pips blocked, 2 cards and steal from BLUE"
+    assert label == "Move robber to Tile 0: 8-Wd(5p) | BLUE settlement@N1(5p) 5p blk,3c; RED settlement@N0(5p) 5p blk,2c and steal from BLUE"
 
 
 # ---------------------------------------------------------------------------
@@ -292,7 +288,7 @@ def test_build_moves_single_road_exact():
     a = Action(Color.RED, ActionType.BUILD_ROAD, (0, 5))
     moves = build_moves([a], observation=None)
     assert len(moves) == 1
-    assert moves[0].label == "Build road on edge (0, 5)"
+    assert moves[0].label == "Road (0, 5)"
     assert moves[0].actions == [a]
 
 
@@ -359,7 +355,7 @@ def test_longest_road_suffix_no_change_exact():
     ps = _mock_public_state_for_node5()
     # No roads: current 0, adding edge (0,5) => 1
     suffix = _longest_road_suffix(ps, Color.RED, [(0, 5)])
-    assert suffix == " | Longest road: 0 -> 1 (+1)"
+    assert suffix == " | LR 0->1(+1)"
 
 
 def test_longest_road_suffix_already_has_road_exact():
@@ -369,7 +365,7 @@ def test_longest_road_suffix_already_has_road_exact():
     ps.board.roads[(5, 0)] = Color.RED
     # Now building (0,5) again would be no change (but we test suffix for same edge)
     suffix = _longest_road_suffix(ps, Color.RED, [(0, 5)])
-    assert suffix == " | Longest road: 1 -> 1 (no change)"
+    assert suffix == " | LR 1->1"
 
 
 def test_longest_road_claim_exact():
@@ -392,7 +388,7 @@ def test_longest_road_claim_exact():
     ps = bps(game)
     # After 3 roads, adding (2,3) and (3,4) should yield 5 and claim
     suffix = _longest_road_suffix(ps, Color.RED, [(2, 3), (3, 4)])
-    assert suffix == " | Longest road: 3 -> 5 (+2) [would claim Longest Road, +2 VP]"
+    assert suffix == " | LR 3->5(+2) [LR+2VP]"
 
 
 # ---------------------------------------------------------------------------
@@ -404,17 +400,15 @@ def test_road_detail_tip_blocked_occupied_exact():
     ps.board.buildings[0] = (Color.BLUE, SETTLEMENT)
     label = _road_node_detail(ps, (0, 5), network_nodes=set(), extra_occupied=None)
     # Tip 0 is occupied, so no extends
-    assert label == " | reaches Node 0: (Tile 0: 8 WOOD (5 pips)) Total: 5 pips [blocked (occupied by BLUE settlement at Node 0)]"
+    assert label == " -> Targets: Node 0 [5p]✗"
 
 
 def test_road_detail_tip_blocked_too_close_shows_extends_exact():
     ps = _mock_public_state_for_node5()
-    # Simulate future settlement at 0, tip 5 is too close
     detail = _road_node_detail(ps, (0, 5), network_nodes={0}, extra_occupied={0}, extra_occupied_color=Color.RED)
-    # Tip is 5, blocked too close to RED at 0, but forward nodes still shown
-    assert "reaches Node 5:" in detail
-    assert "[blocked (too close to RED settlement at Node 0)]" in detail
-    assert "extends toward" in detail
+    # Condensed targets
+    assert "Targets:" in detail
+    assert "✗" in detail
 
 
 # ---------------------------------------------------------------------------
@@ -430,28 +424,28 @@ def test_build_moves_discard_exact():
 def test_build_moves_maritime_trade_exact():
     a = Action(Color.RED, ActionType.MARITIME_TRADE, ("WOOD", "WOOD", "WOOD", "WOOD", "BRICK"))
     moves = build_moves([a], observation=None)
-    assert moves[0].label == "Maritime trade: gives [WOOD, WOOD, WOOD, WOOD] to bank for BRICK"
+    assert moves[0].label == "Maritime trade: gives [Wd, Wd, Wd, Wd] to bank for Br"
 
 
 def test_build_moves_offer_trade_exact():
     offer = (1, 0, 0, 0, 0, 0, 1, 0, 0, 0)
     a = Action(Color.RED, ActionType.OFFER_TRADE, offer)
     moves = build_moves([a], observation=None)
-    assert moves[0].label == "Offer trade: offers [1 WOOD] for [1 BRICK]"
+    assert moves[0].label == "Offer trade: offers [1 Wd] for [1 Br]"
 
 
 def test_build_moves_accept_trade_exact():
     offer = (1, 0, 0, 0, 0, 0, 1, 0, 0, 0)
     a = Action(Color.BLUE, ActionType.ACCEPT_TRADE, offer)
     moves = build_moves([a], observation=None)
-    assert moves[0].label == "Accept trade: offers [1 WOOD] for [1 BRICK]"
+    assert moves[0].label == "Accept trade: offers [1 Wd] for [1 Br]"
 
 
 def test_build_moves_reject_trade_exact():
     offer = (1, 0, 0, 0, 0, 0, 1, 0, 0, 0)
     a = Action(Color.BLUE, ActionType.REJECT_TRADE, offer)
     moves = build_moves([a], observation=None)
-    assert moves[0].label == "Reject trade: offers [1 WOOD] for [1 BRICK]"
+    assert moves[0].label == "Reject trade: offers [1 Wd] for [1 Br]"
 
 
 def test_build_moves_confirm_trade_exact():
@@ -459,7 +453,7 @@ def test_build_moves_confirm_trade_exact():
     confirm = offer + (Color.BLUE,)
     a = Action(Color.RED, ActionType.CONFIRM_TRADE, confirm)
     moves = build_moves([a], observation=None)
-    assert moves[0].label == "Confirm trade with BLUE: offers [1 WOOD] for [1 BRICK]"
+    assert moves[0].label == "Confirm trade with BLUE: offers [1 Wd] for [1 Br]"
 
 
 def test_build_moves_cancel_trade_exact():
@@ -478,15 +472,10 @@ def test_build_moves_initial_settlement_exact():
     # Uses tiny mock to hard-code expected settlement+road (longest-road omitted for initial placement)
     ps = _mock_public_state_for_node5()
     a = Action(Color.RED, ActionType.BUILD_SETTLEMENT, 0)
-    from catan_llm.format import _setup_settlement_moves
+    from catan_llm.format.moves import _setup_settlement_moves
     moves = _setup_settlement_moves(a, ps)
     # First road is (0,1) — longest-road hint is intentionally omitted for BUILD_INITIAL_SETTLEMENT
-    expected = (
-        "Build settlement at Node 0: (Tile 0: 8 WOOD (5 pips)) Total: 5 pips -> build road (0, 1) "
-        "| reaches Node 1: (Tile 0: 8 WOOD (5 pips)) Total: 5 pips [blocked (too close to RED settlement at Node 0)] "
-        "| extends toward Node 2: (no resource tiles) Total: 0 pips [blocked (water/non-land)], "
-        "Node 6: (Tile 1: 6 WOOD (5 pips)) Total: 5 pips [available]"
-    )
+    expected = "Settlement Node 0 [8-Wd | 5p] | Road (0, 1) -> Targets: Node 2 [0p]✗, Node 6 [5p]✓"
     assert moves[0].label == expected
     assert "Longest road" not in moves[0].label
 
@@ -494,12 +483,12 @@ def test_build_moves_initial_settlement_exact():
 def test_build_moves_knight_bundling_exact():
     ps = _mock_public_state_with_settlements()
     knight = Action(Color.RED, ActionType.PLAY_KNIGHT_CARD, None)
-    from catan_llm.format import _knight_moves
+    from catan_llm.format.moves import _knight_moves
     moves = _knight_moves(knight, ps)
     # First follow-up is smallest tile_id (0) with victim BLUE (since BLUE at Node1)
     # Tile 0 detail includes both occupants, sorted BLUE then RED
     first = moves[0]
-    assert first.label == "Play Knight -> move robber to Tile 0: 8 WOOD (5 pips) | Occupants: BLUE: settlement at Node 1 (5 pips) | 5 pips blocked, 3 cards; RED: settlement at Node 0 (5 pips) | 5 pips blocked, 2 cards and steal from BLUE"
+    assert first.label == "Play Knight -> move robber to Tile 0: 8-Wd(5p) | BLUE settlement@N1(5p) 5p blk,3c; RED settlement@N0(5p) 5p blk,2c and steal from BLUE"
     assert len(first.actions) == 2
     assert first.actions[0] == knight
     assert first.actions[1].action_type == ActionType.MOVE_ROBBER
@@ -508,13 +497,13 @@ def test_build_moves_knight_bundling_exact():
 def test_build_moves_build_city_exact():
     a = Action(Color.RED, ActionType.BUILD_CITY, 10)
     moves = build_moves([a], observation=None)
-    assert moves[0].label == "Build city at node 10"
+    assert moves[0].label == "City Node 10"
 
 
 def test_build_moves_build_settlement_simple_exact():
     a = Action(Color.RED, ActionType.BUILD_SETTLEMENT, 5)
     moves = build_moves([a], observation=None)
-    assert moves[0].label == "Build settlement at node 5"
+    assert moves[0].label == "Settlement Node 5"
 
 
 def test_build_moves_move_robber_exact():
@@ -546,4 +535,4 @@ def test_build_moves_discard_exact_via_build_moves():
 def test_build_moves_maritime_exact_via_build_moves():
     a = Action(Color.RED, ActionType.MARITIME_TRADE, ("SHEEP", "SHEEP", "SHEEP", None, "WOOD"))
     moves = build_moves([a], observation=None)
-    assert moves[0].label == "Maritime trade: gives [SHEEP, SHEEP, SHEEP] to bank for WOOD"
+    assert moves[0].label == "Maritime trade: gives [Sh, Sh, Sh] to bank for Wd"

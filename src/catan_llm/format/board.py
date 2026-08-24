@@ -17,7 +17,7 @@ from catan_llm.format.models import (
     BuildingInfo,
     PlayerBoardData,
 )
-from catan_llm.format.utils import get_pip_count
+from catan_llm.format.utils import _abbr_resource, get_pip_count
 from collections import Counter
 
 
@@ -225,6 +225,8 @@ def calculate_blocked_production(robber_tile_id: int, players: List[PlayerBoardD
 def format_robber_info(public_state: PublicState, players: List[PlayerBoardData]) -> str:
     """Format robber information including tile details and blocked production.
 
+    Condensed to a single line: ``ROBBER: Tile N: ROLL Abbr (pips) | Blocking RED: 4p, BLUE: 2p``.
+
     Args:
         public_state: The public state object from Observation agent containing robber information
         players: List of player board data to calculate blocked production
@@ -232,13 +234,8 @@ def format_robber_info(public_state: PublicState, players: List[PlayerBoardData]
     Returns:
         str: Formatted string representation of robber information
     """
-    lines = []
-
-    # Get robber tile ID directly from public_state
     robber_tile_id = public_state.board.robber_tile_id
 
-    # Get tile information from public_state.board.map.tiles
-    # tiles: Dict[int, Tuple[Optional[FastResource], Optional[int]]] - tile_id -> (resource, roll)
     robber_resource = None
     robber_roll = None
     robber_pips = 0
@@ -249,34 +246,28 @@ def format_robber_info(public_state: PublicState, players: List[PlayerBoardData]
         robber_roll = roll
         robber_pips = get_pip_count(roll)
 
-    # Calculate blocked production if we have a valid robber tile
-    blocked_production = {}
+    blocked_production: Dict[str, str] = {}
     if robber_tile_id is not None:
         blocked_production = calculate_blocked_production(robber_tile_id, players)
 
-    # Format robber information
     if robber_tile_id is not None:
         if robber_resource is None:
             tile_info = f"Tile {robber_tile_id}: DESERT"
         else:
-            resource_name = robber_resource.name if hasattr(robber_resource, 'name') else str(robber_resource)
-            tile_info = f"Tile {robber_tile_id}: {robber_roll} {resource_name} ({robber_pips} pips)"
+            abbr = _abbr_resource(robber_resource.name if hasattr(robber_resource, 'name') else str(robber_resource))
+            tile_info = f"Tile {robber_tile_id}: {robber_roll}-{abbr} ({robber_pips}p)"
 
-        lines.append(f"ROBBER: Tile {robber_tile_id} - {tile_info}")
-
-        # Add blocked production information
         if blocked_production:
+            # blocked_production values are like "4 pips" — condense to "4p"
+            parts = []
             for color, blocked_str in sorted(blocked_production.items()):
-                lines.append(f"  * Blocking {color}: {blocked_str}")
-        else:
-            lines.append(f"  * Blocking: None")
-    else:
-        # Fallback if we couldn't find tile information
-        lines.append(f"ROBBER: Unknown position")
-        lines.append(f"  * Tile info: Could not determine robber tile")
-        lines.append(f"  * Blocking: None")
+                num = blocked_str.split()[0]
+                parts.append(f"{color}: {num}p")
+            blocking = ", ".join(parts)
+            return f"ROBBER: {tile_info} | Blocking {blocking}"
+        return f"ROBBER: {tile_info} | Blocking: None"
 
-    return "\n".join(lines)
+    return "ROBBER: Unknown position | Blocking: None"
 
 
 def _calculate_production(buildings: List[BuildingInfo], multiplier: int = 1) -> tuple[int, Dict[str, int]]:
@@ -302,7 +293,9 @@ def _calculate_production(buildings: List[BuildingInfo], multiplier: int = 1) ->
 
 
 def _format_building_string(building: BuildingInfo) -> str:
-    """Format a BuildingInfo object into a display string.
+    """Format a BuildingInfo object into a condensed display string.
+
+    Produces e.g. ``Node 19 [4-Sh, 8-Wd, 3-Wh | 10p]``.
 
     Args:
         building: The BuildingInfo object to format
@@ -310,18 +303,26 @@ def _format_building_string(building: BuildingInfo) -> str:
     Returns:
         str: Formatted string representation of the building
     """
-    hex_info_list = []
-    for hex in building.adjacent_hexes:
-        if hex.resource == "DESERT":
-            hex_info_list.append(f"(Tile {hex.tile_id}: DESERT)")
+    hex_parts: list[str] = []
+    for hx in building.adjacent_hexes:
+        if hx.resource == "DESERT":
+            continue
+        abbr = _abbr_resource(hx.resource)
+        # roll may be None for desert-adjacent edge case — skip those
+        if hx.roll is not None:
+            hex_parts.append(f"{hx.roll}-{abbr}")
         else:
-            hex_info_list.append(f"(Tile {hex.tile_id}: {hex.roll if hex.roll else 'None'} {hex.resource} ({hex.pips} pips))")
-    hex_info = ", ".join(hex_info_list)
-    return f"Node {building.node_id}: {hex_info}, Total: {building.total_pips} pips"
+            hex_parts.append(abbr)
+    hex_str = ", ".join(hex_parts) if hex_parts else "no tiles"
+    total = building.total_pips
+    return f"Node {building.node_id} [{hex_str} | {total}p]"
 
 
 def format_board_occupancy_data(occupancy_data: BoardOccupancyData) -> str:
-    """Format board occupancy data into a readable string.
+    """Format board occupancy data into a condensed readable string.
+
+    Condensed per-building: ``Node 19 [4-Sh, 8-Wd, 3-Wh | 10p]``.
+    Empty sub-sections omitted beyond the production line.
 
     Args:
         occupancy_data: The board occupancy data to format
@@ -350,31 +351,36 @@ def format_board_occupancy_data(occupancy_data: BoardOccupancyData) -> str:
         for resource in resource_pips:
             resource_pips[resource] = settlement_resource_pips[resource] + city_resource_pips[resource]
 
-        # Format production string
-        resource_strings = [f"{res}: {pips}" for res, pips in resource_pips.items() if pips > 0]
-        production_str = f"Total: {total_pips} pips ({', '.join(resource_strings)})" if resource_strings else f"Total: {total_pips} pips"
+        # Format production string with abbreviated resources
+        resource_strings = [f"{_abbr_resource(res)}:{pips}" for res, pips in resource_pips.items() if pips > 0]
+        production_str = f"Total: {total_pips}p ({', '.join(resource_strings)})" if resource_strings else f"Total: {total_pips}p"
 
-        # Collect port information
-        ports = []
+        # Collect port information (abbreviate resource ports)
+        ports: list[str] = []
         for building in settlements + cities:
             if building.port:
-                ports.append(building.port)
-        # Remove duplicates and sort
-        ports = sorted(list(set(ports)))
-        port_str = f", ".join(ports) if ports else "None"
+                ports.append(_abbr_resource(building.port))
+        ports = sorted(set(ports))
+        port_str = ", ".join(ports) if ports else ""
 
-        # Convert BuildingInfo objects to strings for display
-        settlement_strings = [_format_building_string(building) for building in settlements]
-        city_strings = [_format_building_string(building) for building in cities]
-
-        # Convert road tuples to strings
+        settlement_strings = [_format_building_string(b) for b in settlements]
+        city_strings = [_format_building_string(b) for b in cities]
         road_strings = [f"({n1}, {n2})" for n1, n2 in roads]
 
-        lines.append(f"- {color_name}: {production_str}")
-        lines.append(f"  * Ports: {port_str}")
-        lines.append(f"  * Settlements: [{', '.join(settlement_strings) if settlement_strings else 'None'}]")
-        lines.append(f"  * Cities (x2 production): [{', '.join(city_strings) if city_strings else 'None'}]")
-        lines.append(f"  * Roads: Edges [{', '.join(road_strings) if road_strings else 'None'}]")
+        header = f"- {color_name}: {production_str}"
+        if port_str:
+            header += f" Ports: {port_str}"
+        lines.append(header)
+        if settlement_strings:
+            lines.append(f"  * Settlements: {', '.join(settlement_strings)}")
+        if city_strings:
+            lines.append(f"  * Cities (x2): {', '.join(city_strings)}")
+        if road_strings:
+            lines.append(f"  * Roads: {', '.join(road_strings)}")
+        # If player has no buildings/roads, show explicit placeholder so empty
+        # occupancy is not just the header line.
+        if not settlement_strings and not city_strings and not road_strings and not port_str:
+            lines.append(f"  * (no buildings/roads)")
 
     return "\n".join(lines)
 
@@ -391,11 +397,10 @@ def get_starting_resources(public_state: PublicState, node_id: int) -> list[str]
 
 
 def format_starting_resources(public_state: PublicState, node_id: int) -> str:
-    """Human-readable starting-resource list for a second settlement.
+    """Human-readable starting-resource list for a second settlement. Abbreviated.
 
-    Returns a comma-separated list ordered by ``RESOURCES`` (WOOD, BRICK,
-    SHEEP, WHEAT, ORE) with counts for duplicates, e.g. ``"WOOD, BRICK"`` or
-    ``"2 WOOD, 1 BRICK"``. Returns ``"none"`` when the node is desert-adjacent.
+    Returns a comma-separated list ordered by ``RESOURCES`` with abbreviations,
+    e.g. ``"Wd, Br"`` or ``"2 Wd, 1 Br"``. Returns ``"none"`` when desert-adjacent.
     """
     from catanatron.models.enums import RESOURCES
 
@@ -407,11 +412,12 @@ def format_starting_resources(public_state: PublicState, node_id: int) -> str:
     for r in RESOURCES:
         if r in cnt:
             c = cnt[r]
-            parts.append(f"{c} {r}" if c > 1 else r)
-    # Any resource not in RESOURCES (should not happen) appended last
+            abbr = _abbr_resource(r)
+            parts.append(f"{c} {abbr}" if c > 1 else abbr)
     for r, c in cnt.items():
         if r not in RESOURCES:
-            parts.append(f"{c} {r}" if c > 1 else r)
+            abbr = _abbr_resource(r)
+            parts.append(f"{c} {abbr}" if c > 1 else abbr)
     return ", ".join(parts)
 
 

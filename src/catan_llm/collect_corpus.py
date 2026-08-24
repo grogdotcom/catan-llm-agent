@@ -163,25 +163,42 @@ def decision_to_record(
         Dict ready to be json.dumps'd as one JSONL line.
     """
     color = selected_action.color
-    # Build observation + prompt via LLMObservationAgent.build_full_prompt
+    # Build observation via helper; moves + chosen index must be resolved
+    # before the prompt so the initial-placement footer can embed the exact
+    # 1-indexed Move ID selected by the Grandmaster engine.
     observation = _build_observation(game_snapshot, color)
     inventory = observation.inventory
-    agent = LLMObservationAgent(color)
-    prompt = agent.build_full_prompt(observation, playable_actions, inventory)
 
     moves = build_moves(playable_actions, observation)
     chosen_index, chosen_move = _find_chosen_move(moves, selected_action, next_road_selected)
-
-    # Prepare serialization
-    phase = getattr(game_snapshot.state.current_prompt, "name", str(game_snapshot.state.current_prompt))
-    turn_number = getattr(game_snapshot.state, "num_turns", None)
-    if turn_number is None:
-        turn_number = getattr(game_snapshot.state, "current_turn_index", None)
 
     # Fallback if chosen not found (should not happen) — pick first
     if chosen_index is None:
         chosen_index = 1
         chosen_move = moves[0] if moves else None
+
+    # Prepare serialization helpers needed for footer decision
+    phase = getattr(game_snapshot.state.current_prompt, "name", str(game_snapshot.state.current_prompt))
+    turn_number = getattr(game_snapshot.state, "num_turns", None)
+    if turn_number is None:
+        turn_number = getattr(game_snapshot.state, "current_turn_index", None)
+
+    # Initial placements get the Grandmaster disclosure footer with the exact
+    # chosen Move ID; all other phases keep the default footer.
+    is_initial = game_snapshot.state.current_prompt in [
+        ActionPrompt.BUILD_INITIAL_SETTLEMENT,
+        ActionPrompt.BUILD_INITIAL_ROAD,
+    ]
+    agent = LLMObservationAgent(color)
+    if is_initial:
+        footer = (
+            "[DECISION REQUIRED]\n"
+            f"The Grandmaster engine has selected Move ID {chosen_index} as the optimal action.\n"
+            "Explain the strategic and tactical reasoning behind this exact choice, then output the action ID. "
+        )
+        prompt = agent.build_full_prompt(observation, playable_actions, inventory, footer=footer)
+    else:
+        prompt = agent.build_full_prompt(observation, playable_actions, inventory)
 
     chosen_label = chosen_move.label if chosen_move is not None else _serialize_action(selected_action).get("raw", "")
 
@@ -384,6 +401,103 @@ class CorpusAccumulator(GameAccumulator):
 
 
 # ---------------------------------------------------------------------------
+# Placements-only accumulator — all players, initial settlement+road only
+# ---------------------------------------------------------------------------
+
+
+class PlacementsAccumulator(GameAccumulator):
+    """Collects *all* initial-placement decisions (not just winner).
+
+    Each bundled settlement→road placement is one record, so a 4-player game
+    yields 8 records.  Unlike :class:`CorpusAccumulator` this ignores
+    ``winner_color`` for filtering — every player's placements are emitted.
+    ``winner`` is still stored as metadata but does not gate inclusion.
+    """
+
+    def __init__(self, players, game_id: int = 0):
+        self.players = players
+        self.game_id = game_id
+        self.corpus: List[Dict[str, Any]] = []
+
+    def after(self, game):
+        winner_color = game.winning_color()
+
+        # Merge all players' decisions into a single chronological stream.
+        # Sorting by the snapshot's action-record length recovers global order
+        # (settlement and its road are consecutive globally).
+        merged: List[Dict[str, Any]] = []
+        for p in self.players:
+            if not isinstance(p, CorpusCollectionPlayer):
+                continue
+            for d in p.decisions:
+                merged.append(d)
+        # Stable sort by time (action_records length at decision snapshot)
+        try:
+            merged.sort(key=lambda d: len(d["state"].state.action_records))
+        except Exception:
+            pass
+
+        decision_id = 0
+        i = 0
+        while i < len(merged):
+            decision = merged[i]
+            selected = decision["selected"]
+            action_values = decision["actions"]
+            state_before = decision["state"]
+            playable = decision.get("playable_actions", list(action_values.keys()))
+            if not playable:
+                playable = list(action_values.keys())
+
+            is_initial = state_before.state.current_prompt in [
+                ActionPrompt.BUILD_INITIAL_SETTLEMENT,
+                ActionPrompt.BUILD_INITIAL_ROAD,
+            ]
+            if not is_initial:
+                i += 1
+                continue
+
+            # Bundle settlement + next road as one prompt (same as CorpusAccumulator)
+            if state_before.state.current_prompt == ActionPrompt.BUILD_INITIAL_SETTLEMENT:
+                next_road_selected = None
+                if i + 1 < len(merged):
+                    nxt = merged[i + 1]
+                    if nxt["state"].state.current_prompt == ActionPrompt.BUILD_INITIAL_ROAD:
+                        # Only bundle if same player (should always hold for initial)
+                        if nxt["selected"].color == selected.color:
+                            next_road_selected = nxt["selected"]
+                            i += 1  # skip the road in the outer loop
+
+                record = decision_to_record(
+                    game_snapshot=state_before,
+                    playable_actions=playable,
+                    selected_action=selected,
+                    next_road_selected=next_road_selected,
+                    game_id=self.game_id,
+                    decision_id=decision_id,
+                    winner_color=winner_color,
+                    action_values=action_values,
+                )
+                self.corpus.append(record)
+                decision_id += 1
+            else:
+                # Standalone road that wasn't bundled (defensive — shouldn't
+                # happen for legal initial placements, but emit it anyway).
+                record = decision_to_record(
+                    game_snapshot=state_before,
+                    playable_actions=playable,
+                    selected_action=selected,
+                    next_road_selected=None,
+                    game_id=self.game_id,
+                    decision_id=decision_id,
+                    winner_color=winner_color,
+                    action_values=action_values,
+                )
+                self.corpus.append(record)
+                decision_id += 1
+            i += 1
+
+
+# ---------------------------------------------------------------------------
 # Simulation runner — writes JSONL
 # ---------------------------------------------------------------------------
 
@@ -438,6 +552,50 @@ def run_simulation(num_games=1000, output_file="high_decision_moves.jsonl"):
     print(f"Finished. Saved {len(all_high_decisions)} moves to {output_file} (JSONL, one record per line)")
 
 
+def run_placements_simulation(num_games=1000, output_file="initial_placements.jsonl"):
+    """Run AlphaBeta self-play and collect *only* initial placements.
+
+    Unlike :func:`run_simulation`, this emits every initial-placement decision
+    from *all* players (not just the winner) and ignores the high-decision
+    filters.  Each game yields 8 records (4 players × 2 placements), with
+    settlement+road bundled as a single choice (same prompting as the main
+    corpus).
+
+    Args:
+        num_games: Number of games to simulate.
+        output_file: Path to JSONL output (one record per placement).
+    """
+    all_placements: List[Dict[str, Any]] = []
+
+    player_instances = [
+        CorpusCollectionPlayer(Color.RED, prunning=False),
+        CorpusCollectionPlayer(Color.BLUE, prunning=False),
+        CorpusCollectionPlayer(Color.ORANGE, prunning=False),
+        CorpusCollectionPlayer(Color.WHITE, prunning=False),
+    ]
+
+    for i in range(num_games):
+        for p in player_instances:
+            p.reset_state()
+
+        accumulator = PlacementsAccumulator(player_instances, game_id=i)
+        game = Game(player_instances, friendly_robber=False)
+        game.play(accumulators=[accumulator])
+
+        all_placements.extend(accumulator.corpus)
+        print(
+            f"Game {i+1}/{num_games} finished. "
+            f"Total placements collected: {len(all_placements)} "
+            f"(this game: {len(accumulator.corpus)})"
+        )
+
+        if (i + 1) % 10 == 0 or i == 0:
+            _write_jsonl(output_file, all_placements)
+
+    _write_jsonl(output_file, all_placements)
+    print(f"Finished. Saved {len(all_placements)} placements to {output_file} (JSONL, one record per line)")
+
+
 if __name__ == "__main__":
     import argparse
 
@@ -448,11 +606,23 @@ if __name__ == "__main__":
     parser.add_argument("output_file", nargs="?", default="high_decision_moves.jsonl", help="Output JSONL path")
     parser.add_argument("-n", "--num-games", type=int, dest="num_games_flag", help="Number of games (flag form)")
     parser.add_argument("-o", "--output", "--out", type=str, dest="output_flag", help="Output JSONL path (flag form)")
+    parser.add_argument(
+        "--placements",
+        "--initial-only",
+        action="store_true",
+        dest="placements",
+        help="Collect only initial placements from all players (8 per game, settlement+road bundled)",
+    )
     args = parser.parse_args()
 
     # Flag forms override positionals if provided
     n = args.num_games_flag if args.num_games_flag is not None else args.num_games
     out = args.output_flag if args.output_flag is not None else args.output_file
+    placements_mode = bool(getattr(args, "placements", False))
+    # Default placements output is initial_placements.jsonl when --placements is set
+    # and the user didn't explicitly choose an output path.
+    if placements_mode and args.output_flag is None and args.output_file == "high_decision_moves.jsonl":
+        out = "initial_placements.jsonl"
 
     # Handle swapped args: `script out.jsonl 100` case
     if isinstance(n, str) and n.endswith(".jsonl"):
@@ -464,4 +634,7 @@ if __name__ == "__main__":
     # Ensure extension is .jsonl
     if not out.endswith(".jsonl"):
         print(f"Note: output {out} does not end with .jsonl — using as-is, but JSONL is recommended.")
-    run_simulation(n, output_file=out)
+    if placements_mode:
+        run_placements_simulation(n, output_file=out)
+    else:
+        run_simulation(n, output_file=out)

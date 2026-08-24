@@ -23,7 +23,7 @@ from catanatron.models.enums import Action, ActionPrompt, ActionType, RESOURCES
 from catanatron.models.public_state import PublicState
 
 from catan_llm.format.board import format_starting_resources, get_adjacent_hex_info
-from catan_llm.format.utils import _format_maritime_trade_value, _format_trade_offer_value, _name_of, get_pip_count, _format_coordinate
+from catan_llm.format.utils import _abbr_resource, _format_maritime_trade_value, _format_trade_offer_value, _name_of, get_pip_count, _format_coordinate
 
 AUTO_ROAD = "AUTO_ROAD"
 """Fallback sentinel token in a Move's action list.
@@ -64,22 +64,24 @@ def _node_pip_total(public_state: Optional[PublicState], node_id: int) -> int:
 
 
 def _describe_node(public_state: Optional[PublicState], node_id: int) -> str:
-    """Concise node description with adjacent tiles, port and total pips.
+    """Condensed node description: ``Node 5 [11-Sh, 5-Wh | 6p]``.
 
-    Mirrors ``_format_building_string`` / ``get_adjacent_hex_info`` so the
-    tile strings are identical to board-occupancy formatting. Returns e.g.
-    ``Node 5: (Tile 0: 11 SHEEP (2 pips), Tile 4: 5 WHEAT (4 pips)) Port: 3:1 Total: 6 pips``.
+    Mirrors board occupancy condensed format: roll-abbrev pairs + total pips.
     """
     if public_state is None:
         return f"Node {node_id}"
     adjacent_hexes, port = get_adjacent_hex_info(public_state, node_id)
-    hex_info_list = []
+    parts: list[str] = []
     for hx in adjacent_hexes:
-        hex_info_list.append(f"(Tile {hx.tile_id}: {hx.roll} {hx.resource} ({hx.pips} pips))")
-    hex_str = ", ".join(hex_info_list) if hex_info_list else "(no resource tiles)"
-    port_str = f" Port: {port}" if port else ""
+        abbr = _abbr_resource(hx.resource)
+        if hx.roll is not None:
+            parts.append(f"{hx.roll}-{abbr}")
+        else:
+            parts.append(abbr)
+    hex_str = ", ".join(parts) if parts else "no tiles"
     total = sum(h.pips for h in adjacent_hexes)
-    return f"Node {node_id}: {hex_str}{port_str} Total: {total} pips"
+    # Port omitted in condensed node unless requested — keep minimal
+    return f"Node {node_id} [{hex_str} | {total}p]"
 
 
 def _is_buildable_node(public_state: Optional[PublicState], node_id: int) -> bool:
@@ -219,31 +221,19 @@ def _longest_road_suffix(
     color: Any,
     extra_edges: Sequence[Tuple[int, int]],
 ) -> str:
-    """Human suffix describing longest-road change for a road build.
-
-    Shows ``current -> projected (+delta)`` and whether the move would
-    claim/extend Longest Road (≥5 and beats the global holder).
-
-    Returns:
-        Suffix like ``" | Longest road: 2 -> 4 (+2)"`` or
-        ``" | Longest road: 4 -> 6 (+2, would claim Longest Road, +2 VP)"``.
-        Empty string if state/color unavailable.
-    """
+    """Condensed longest-road suffix: `` | LR 2->4(+2)``."""
     if public_state is None or color is None:
         return ""
     current = _player_longest_road_length(public_state, color, None)
     projected = _player_longest_road_length(public_state, color, extra_edges)
     delta = projected - current
-    # Base fragment
     if delta == 0:
-        # Still inform current length; useful to see no growth (e.g., closing a loop)
-        base = f" | Longest road: {current} -> {projected} (no change)"
+        base = f" | LR {current}->{projected}"
     elif delta > 0:
-        base = f" | Longest road: {current} -> {projected} (+{delta})"
+        base = f" | LR {current}->{projected}(+{delta})"
     else:
-        base = f" | Longest road: {current} -> {projected} ({delta})"
+        base = f" | LR {current}->{projected}({delta})"
 
-    # Longest Road bonus hint (5+ roads and strictly longer than current holder)
     try:
         global_len = getattr(public_state.board, "longest_road_length", 0) or 0
         holder = getattr(public_state.board, "longest_road_color", None)
@@ -252,22 +242,16 @@ def _longest_road_suffix(
 
     would_claim = False
     if projected >= 5 and projected > global_len:
-        # If holder is the same color, extending still counts as holding, but
-        # the interesting case is taking/retaining with a new longer length.
-        # Show the hint whenever the player would be the holder after the move.
         if holder is None or holder != color or projected > global_len:
             would_claim = True
 
     if would_claim:
         if holder == color:
-            base += " [would extend Longest Road]"
+            base += " [LR ext]"
         else:
-            base += " [would claim Longest Road, +2 VP]"
-        if projected < 5:
-            # Not actually claimable yet, but keep hint subtle
-            base += " (needs 5)"
+            base += " [LR+2VP]"
     elif projected >= 5 and holder == color and projected == global_len:
-        base += " [holds Longest Road]"
+        base += " [holds LR]"
 
     return base
 
@@ -283,10 +267,7 @@ def _tile_id_for_coordinate(public_state: Optional[PublicState], coordinate) -> 
 
 
 def _robber_tile_detail(public_state: Optional[PublicState], coordinate) -> str:
-    """Rich robber tile detail: tile resource/roll/pips + occupants + card counts.
-
-    Returns e.g. ``Tile 7: 8 ORE (5 pips) | Occupants: RED city at Node 10 (10 pips, 4 cards), BLUE settlement at Node 11 (5 pips, 2 cards)``.
-    """
+    """Condensed robber tile detail: ``Tile 7: 8-Or(5p) | RED city@N10(5p,4c)``."""
     if public_state is None or coordinate is None:
         return _coordinate_tile_label(public_state, coordinate)
     tile_id = _tile_id_for_coordinate(public_state, coordinate)
@@ -297,16 +278,15 @@ def _robber_tile_detail(public_state: Optional[PublicState], coordinate) -> str:
         tile_str = f"Tile {tile_id}: DESERT"
         pips = 0
     else:
-        resource_name = resource.name if hasattr(resource, 'name') else str(resource)
+        abbr = _abbr_resource(resource.name if hasattr(resource, 'name') else str(resource))
         pips = get_pip_count(roll)
-        tile_str = f"Tile {tile_id}: {roll} {resource_name} ({pips} pips)"
+        tile_str = f"Tile {tile_id}: {roll}-{abbr}({pips}p)"
 
-    # Occupants on this tile
     tiles_to_nodes: Dict[int, List[int]] = defaultdict(list)
     for nid, tids in public_state.board.map.adjacent_tiles.items():
         for tid in tids:
             tiles_to_nodes[tid].append(nid)
-    occupants: Dict[Any, List[Tuple[int, str, int]]] = defaultdict(list)  # color -> list of (node, type, pips_blocked)
+    occupants: Dict[Any, List[Tuple[int, str, int]]] = defaultdict(list)
     for node_id in tiles_to_nodes.get(tile_id, []):
         building = public_state.board.buildings.get(node_id)
         if building is None:
@@ -318,21 +298,19 @@ def _robber_tile_detail(public_state: Optional[PublicState], coordinate) -> str:
         occupants[owner].append((node_id, btype_name, blocked))
 
     if not occupants:
-        return f"{tile_str} | No occupants"
+        return f"{tile_str} | no occupants"
 
     parts = []
     for owner in sorted(occupants.keys(), key=lambda c: getattr(c, "name", str(c))):
         color_name = _name_of(owner)
         hand_cards = public_state.players.get(owner)
         card_count = getattr(hand_cards, "hand_resource_count", "?") if hand_cards is not None else "?"
-        # sum pips for this owner on this tile
         total_blocked = sum(bp for _, _, bp in occupants[owner])
         nodes_desc = ", ".join(
-            f"{btype.lower()} at Node {nid} ({bp} pips)" for nid, btype, bp in sorted(occupants[owner])
+            f"{btype.lower()}@N{nid}({bp}p)" for nid, btype, bp in sorted(occupants[owner])
         )
-        parts.append(f"{color_name}: {nodes_desc} | {total_blocked} pips blocked, {card_count} cards")
-    occupants_str = "; ".join(parts)
-    return f"{tile_str} | Occupants: {occupants_str}"
+        parts.append(f"{color_name} {nodes_desc} {total_blocked}p blk,{card_count}c")
+    return f"{tile_str} | {'; '.join(parts)}"
 
 
 def _road_node_detail(
@@ -343,85 +321,47 @@ def _road_node_detail(
     extra_occupied: Optional[Set[int]] = None,
     extra_occupied_color: Any = None,
 ) -> str:
-    """Describe settlement opportunities reachable via ``edge``.
+    """Condensed settlement targets reachable via ``edge``.
 
-    A road touches exactly one *new* node (the tip) and from that tip two
-    further nodes are one road-length away. This mirrors the board geometry:
-    interior nodes have degree 3, so from the tip there are two forward
-    extensions. Both the direct tip and the two forward nodes are shown with
-    full tile/port/pip detail and an explicit availability tag
-    (``available`` vs ``blocked (occupied ...)`` / ``blocked (too close ...)``).
+    Returns compact `` -> Targets: Node 2 [8p]✓, Node 6 [8p]✓`` style.
+    Tip reachability respects buildability (✓ available / ✗ blocked).
 
     Args:
         public_state: Public game state for tile/port lookups.
         edge: Sorted ``(n1, n2)`` road edge.
-        exclude_nodes: Nodes to exclude from display (e.g., the settlement node
-            of an initial-placement ``settlement -> road`` bundle, which will be
-            occupied).
-        network_nodes: Player's current road/settlement network. If provided,
-            the *new* tip is the endpoint not in this network; otherwise the
-            tip is inferred as the endpoint(s) not in ``exclude_nodes``. This
-            keeps labels deterministic for roads that close a loop.
-        extra_occupied: Nodes that will be occupied after the current move
-            (e.g., the settlement at node 0 for initial placement). These are
-            treated as occupied for distance-rule checks, so immediate neighbours
-            of the new settlement are correctly reported as blocked.
-
-    Returns:
-        Suffix like ``" | reaches Node 5: ... [available] | extends toward
-        Node 10: ... [blocked (...)] , Node 11: ... [available]"``.
+        exclude_nodes: Nodes to exclude (e.g., settlement node).
+        network_nodes: Player network to determine tip.
+        extra_occupied: Nodes that will be occupied after move.
     """
     if public_state is None:
         return ""
     a, b = tuple(sorted(edge))
     exclude = set(exclude_nodes or [])
 
-    # Determine the "new" tip(s) of the road.
     if network_nodes is not None:
         new_tips = [n for n in (a, b) if n not in network_nodes and n not in exclude]
-        # If both endpoints are already in the network (closing a loop) or both
-        # are new (should not happen for legal moves), fall back to any
-        # non-excluded endpoint so we still describe something.
         if not new_tips:
             new_tips = [n for n in (a, b) if n not in exclude]
-            # If still empty (edge == excluded), nothing to describe.
             if not new_tips:
                 return ""
-        # Legal placements extend by one tip at a time; show the first new tip
-        # deterministically (sorted) to avoid 4-node blowup and match user's
-        # "1 new node + 2 forward" expectation.
         new_tips = sorted(new_tips)
-        # If two new tips (rare), we describe both tips but cap extensions to
-        # two per tip; total then is 2 direct + up to 4 extended. Prefer to
-        # describe only the first tip to keep labels compact.
         if len(new_tips) > 1:
             new_tips = new_tips[:1]
     else:
-        # No network context: treat the first non-excluded endpoint as the tip
-        # (setup settlement case where settlement node is excluded).
         candidates = [n for n in (a, b) if n not in exclude]
         if not candidates:
             return ""
         new_tips = sorted(candidates)[:1]
 
-    segments: List[str] = []
-    # Collect forward nodes for the tip(s)
-    for tip in new_tips:
-        is_ok, reason = _node_buildability_detail(
-            public_state, tip, extra_occupied=extra_occupied, extra_occupied_color=extra_occupied_color
-        )
-        segments.append(f"reaches {_describe_node(public_state, tip)} [{reason}]")
-        # If the tip itself is already developed (has a settlement/city, or
-        # will have one from the current move), no further extension is useful
-        # — the network cannot grow past an occupied node.
-        tip_occupied = (public_state.board.buildings.get(tip) is not None) or (
-            extra_occupied is not None and tip in extra_occupied
-        )
-        if tip_occupied:
-            continue
-        # Forward extensions from the tip, excluding the edge itself and any
-        # excluded nodes. Degree-3 interior => exactly 2 forward nodes.
-        forward = []
+    # For condensed style we show forward extension nodes (2 away from settlement).
+    # If no forward nodes, fall back to showing the tip itself.
+    tip = new_tips[0]
+    tip_occupied = (public_state.board.buildings.get(tip) is not None) or (
+        extra_occupied is not None and tip in extra_occupied
+    )
+
+    forward: List[int] = []
+    if not tip_occupied:
         for nb in STATIC_GRAPH.neighbors(tip):
             if nb in (a, b):
                 continue
@@ -429,18 +369,19 @@ def _road_node_detail(
                 continue
             forward.append(nb)
         forward = sorted(forward)
-        if forward:
-            fwd_parts = []
-            for fwd in forward:
-                ok, rsn = _node_buildability_detail(
-                    public_state, fwd, extra_occupied=extra_occupied, extra_occupied_color=extra_occupied_color
-                )
-                fwd_parts.append(f"{_describe_node(public_state, fwd)} [{rsn}]")
-            segments.append(f"extends toward {', '.join(fwd_parts)}")
 
-    if not segments:
-        return " | no buildable settlement spots nearby"
-    return " | " + " | ".join(segments)
+    targets: List[int] = forward if forward else [tip]
+
+    parts: List[str] = []
+    for nid in targets:
+        pips = _node_pip_total(public_state, nid)
+        ok, _rsn = _node_buildability_detail(
+            public_state, nid, extra_occupied=extra_occupied, extra_occupied_color=extra_occupied_color
+        )
+        mark = "✓" if ok else "✗"
+        parts.append(f"Node {nid} [{pips}p]{mark}")
+
+    return " -> Targets: " + ", ".join(parts)
 
 
 def _coordinate_tile_label(public_state: Optional[PublicState], coordinate) -> str:
@@ -476,16 +417,16 @@ def _label_action(action: Action, public_state: Optional[PublicState] = None) ->
                 network = None
             detail = _road_node_detail(public_state, edge, network_nodes=network)
             longest = _longest_road_suffix(public_state, color, [edge])
-            return f"Build road on edge {edge}{detail}{longest}"
-        return f"Build road on edge {edge}"
+            return f"Road {edge}{detail}{longest}"
+        return f"Road {edge}"
     if kind == ActionType.BUILD_SETTLEMENT:
         if public_state is not None:
-            return f"Build settlement at {_describe_node(public_state, value)}"
-        return f"Build settlement at node {value}"
+            return f"Settlement {_describe_node(public_state, value)}"
+        return f"Settlement Node {value}"
     if kind == ActionType.BUILD_CITY:
         if public_state is not None:
-            return f"Build city at {_describe_node(public_state, value)}"
-        return f"Build city at node {value}"
+            return f"City {_describe_node(public_state, value)}"
+        return f"City Node {value}"
     if kind == ActionType.BUY_DEVELOPMENT_CARD:
         return "Buy a development card"
     if kind == ActionType.PLAY_KNIGHT_CARD:
@@ -668,12 +609,10 @@ def _road_building_moves(play_card: Action, public_state: PublicState) -> List[M
                 seen_pairs.add(pair)
                 road_a, road_b = sorted((first, second))
                 detail_a = _road_node_detail(public_state, first, network_nodes=base_network)
-                # Second road is placed after first, so its network includes first
                 second_network_for_detail = base_network | set(first)
                 detail_b = _road_node_detail(public_state, second, network_nodes=second_network_for_detail)
                 longest = _longest_road_suffix(public_state, color, [first, second])
-                # Keep the sorted-road pair prefix stable, then annotate each road
-                label = f"Play Road Building -> build roads {road_a} and {road_b} | road {first}{detail_a} | road {second}{detail_b}{longest}"
+                label = f"Play RB roads {road_a} and {road_b} | Road {first}{detail_a} | Road {second}{detail_b}{longest}"
                 moves.append(
                     Move(
                         label=label,
@@ -726,7 +665,7 @@ def _setup_settlement_moves(settle: Action, public_state: PublicState) -> List[M
     # bloats every one of the ~60-110 options without signal.
     return [
         Move(
-            label=f"Build settlement at {settle_desc_with_resources} -> build road {edge}{_road_node_detail(public_state, edge, exclude_nodes={node}, network_nodes={node}, extra_occupied={node}, extra_occupied_color=color)}",
+            label=f"Settlement {settle_desc_with_resources} | Road {edge}{_road_node_detail(public_state, edge, exclude_nodes={node}, network_nodes={node}, extra_occupied={node}, extra_occupied_color=color)}",
             actions=[settle, Action(color, ActionType.BUILD_ROAD, edge)],
         )
         for edge in road_options
@@ -819,15 +758,12 @@ def _discard_moves(color, inventory, k: int, public_state: Optional[PublicState]
     moves: List[Move] = []
     for combo in combos:
         actions = [Action(color, ActionType.DISCARD_RESOURCE, r) for r in combo]
-        # Count summary for label, e.g. "BRICK:2, SHEEP:1, WHEAT:1"
         from collections import Counter
 
         counts = Counter(combo)
-        # Preserve RESOURCES order in summary
-        summary = ", ".join(f"{r}:{counts[r]}" for r in RESOURCES if r in counts)
-        # Sorted resource list string
-        resources_str = ", ".join(combo)
-        label = f"Discard {resources_str} ({summary} → {k} cards)"
+        summary = ", ".join(f"{_abbr_resource(r)}:{counts[r]}" for r in RESOURCES if r in counts)
+        resources_str = ", ".join(_abbr_resource(r) for r in combo)
+        label = f"Discard {resources_str} ({summary} → {k}c)"
         moves.append(Move(label=label, actions=actions))
     return moves
 

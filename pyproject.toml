@@ -32,6 +32,7 @@ omit = [
     "*/venv/*",
     "*/__pycache__/*",
     "src/catan_llm/collect_corpus.py",
+    "src/catan_llm/collect_placements.py",
     # game_formatter is a deprecated shim — not counted
     "src/catan_llm/game_formatter.py",
 ]
