@@ -323,8 +323,9 @@ def _road_node_detail(
 ) -> str:
     """Condensed settlement targets reachable via ``edge``.
 
-    Returns compact `` -> Targets: Node 2 [8p]✓, Node 6 [8p]✓`` style.
-    Tip reachability respects buildability (✓ available / ✗ blocked).
+    Returns compact `` -> Targets: Node 2 [8-Wd | 5p]✓, Node 6 [6-Br | 3p]✓`` style
+    with per-target resources/rolls and total pips. Tip reachability respects
+    buildability (✓ available / ✗ blocked).
 
     Args:
         public_state: Public game state for tile/port lookups.
@@ -374,12 +375,13 @@ def _road_node_detail(
 
     parts: List[str] = []
     for nid in targets:
-        pips = _node_pip_total(public_state, nid)
+        # Use full node description with resources/rolls, then availability mark.
+        desc = _describe_node(public_state, nid)
         ok, _rsn = _node_buildability_detail(
             public_state, nid, extra_occupied=extra_occupied, extra_occupied_color=extra_occupied_color
         )
         mark = "✓" if ok else "✗"
-        parts.append(f"Node {nid} [{pips}p]{mark}")
+        parts.append(f"{desc}{mark}")
 
     return " -> Targets: " + ", ".join(parts)
 
@@ -852,8 +854,103 @@ def format_moves(moves: Sequence[Move], observation=None) -> str:
     """Render moves as a numbered, LLM-readable list.
 
     The list index is the stable handle the LLM returns; see ``parse_move``.
+    For initial placement (``BUILD_INITIAL_SETTLEMENT``) moves are grouped
+    by settlement node so the heavy tile/resource/pip text is defined once
+    per intersection and each road is a sub-action:
+
+    ``[PLAYABLE MOVES - INITIAL PLACEMENT]``
+    ``Node 12 [10-Wd, 5-Br, 2-Sh | 8p]:``
+    ``  Action 41: + Road (12,13) -> Targets: Node 13 [5-Wd | 4p]✓``
     """
     current_prompt = getattr(observation, "current_prompt", None)
+    is_initial = current_prompt == ActionPrompt.BUILD_INITIAL_SETTLEMENT
+
+    if is_initial:
+        lines = ["[PLAYABLE MOVES - INITIAL PLACEMENT]"]
+        if current_prompt is not None:
+            phase = getattr(current_prompt, "name", str(current_prompt))
+            lines.append(f"[PHASE: {phase}]")
+        if not moves:
+            lines.append("  (no moves available)")
+            return "\n".join(lines)
+
+        public_state = getattr(observation, "public_state", None) if observation is not None else None
+
+        # Group moves by settlement node (global index preserved).
+        from collections import OrderedDict
+
+        groups: "OrderedDict[Any, List[Tuple[int, Move]]]" = OrderedDict()
+        for idx, move in enumerate(moves, start=1):
+            node_id = None
+            if move.actions:
+                a0 = move.actions[0]
+                if getattr(a0, "action_type", None) == ActionType.BUILD_SETTLEMENT:
+                    try:
+                        node_id = a0.value
+                    except Exception:
+                        node_id = None
+            if node_id is None:
+                # Fallback: parse settlement node from label
+                m = re.search(r"Node\s+(\d+)", move.label)
+                if m:
+                    try:
+                        node_id = int(m.group(1))
+                    except Exception:
+                        node_id = m.group(1)
+                else:
+                    node_id = f"unknown-{idx}"
+            if node_id not in groups:
+                groups[node_id] = []
+            groups[node_id].append((idx, move))
+
+        for node_id, entries in groups.items():
+            # Header — heavy text once per intersection
+            if public_state is not None and isinstance(node_id, int):
+                header = _describe_node(public_state, node_id)
+                # For second placement, append starting-resource suffix
+                first_label = entries[0][1].label
+                if "Starting resources:" in first_label:
+                    try:
+                        from catan_llm.format.board import format_starting_resources
+
+                        sr = format_starting_resources(public_state, node_id)
+                        if sr != "none":
+                            header = f"{header} → Starting resources: {sr}"
+                    except Exception:
+                        # Fallback: extract from label
+                        m = re.search(r"Starting resources:\s*([^|]+)", first_label)
+                        if m:
+                            sr_text = m.group(1).strip()
+                            header = f"{header} → Starting resources: {sr_text}"
+                lines.append(f"{header}:")
+            else:
+                # No public state — derive header from first label
+                first_label = entries[0][1].label
+                if " | Road " in first_label:
+                    hdr = first_label.split(" | Road ", 1)[0]
+                    if hdr.startswith("Settlement "):
+                        hdr = hdr[len("Settlement ") :]
+                    lines.append(f"{hdr}:")
+                else:
+                    lines.append(f"Node {node_id}:")
+
+            for idx, move in entries:
+                # Extract the road tail from the pre-built label
+                if " | Road " in move.label:
+                    road_tail = move.label.split(" | Road ", 1)[1]
+                    road_detail = f"Road {road_tail}"
+                elif "Road " in move.label:
+                    pos = move.label.find("Road ")
+                    road_detail = move.label[pos:]
+                else:
+                    road_detail = move.label
+                if road_detail.startswith("Road "):
+                    road_detail = "+ " + road_detail
+                lines.append(f"  Action {idx}: {road_detail}")
+
+        return "\n".join(lines)
+
+    # Non-initial (flat) rendering
     lines = ["[PLAYABLE MOVES]"]
     if current_prompt is not None:
         phase = getattr(current_prompt, "name", str(current_prompt))

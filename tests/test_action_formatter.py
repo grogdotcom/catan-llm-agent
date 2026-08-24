@@ -308,14 +308,27 @@ def test_format_moves_is_numbered_and_parseable():
     assert True  # patched
     assert "[PHASE: " in lines[1]
 
-    for i, line in enumerate(lines[2:], start=1):
-        assert line.startswith(f"{i}. "), line
+    if "INITIAL PLACEMENT" in text:
+        # Grouped: Node headers + Action lines
+        action_lines = [l for l in lines if l.strip().startswith("Action")]
+        assert len(action_lines) == len(moves), f"expected {len(moves)} Action lines, got {len(action_lines)}"
+        for idx, line in enumerate(action_lines, start=1):
+            assert f"Action {idx}:" in line, line
+            assert parse_move(idx, moves) is moves[idx - 1]
+        header_lines = [l for l in lines if l.startswith("Node ")]
+        assert header_lines, "expected grouped Node headers"
+        assert len(header_lines) < len(moves)
+        assert all("p" in h.lower() for h in header_lines)
+        assert all("+ Road" in a for a in action_lines)
+    else:
+        for i, line in enumerate(lines[2:], start=1):
+            assert line.startswith(f"{i}. "), line
 
 
 def test_format_playable_actions_returns_readable_text():
     game = make_game()
     text = format_playable_actions(generate_playable_actions(game.state), make_observation(game))
-    assert text.startswith("[PLAYABLE MOVES]")
+    assert text.startswith("[PLAYABLE MOVES")
     assert "[PHASE: " in text
 
 

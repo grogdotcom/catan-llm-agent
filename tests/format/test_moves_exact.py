@@ -259,9 +259,9 @@ def test_label_build_road_enriched_exact_with_longest():
     label = _label_action(a, ps)
     # Hard-coded expected based on mock above and longest road 0->1
     # Node0: Tile0 only => (Tile 0: 8 WOOD (5 pips)) Total:5
-    # Node1: Tile0 only => same
-    # Node20: no adjacent tiles in mock => "(no resource tiles)" Total:0 but actually 20 not in adjacent_tiles, so no resource tiles
-    expected = "Road (0, 5) -> Targets: Node 1 [5p]✓, Node 20 [0p]✓ | LR 0->1(+1)"
+    # Node1: Tile0 only => same -> 8-Wd
+    # Node20: no adjacent tiles in mock => "no tiles" Total:0
+    expected = "Road (0, 5) -> Targets: Node 1 [8-Wd | 5p]✓, Node 20 [no tiles | 0p]✓ | LR 0->1(+1)"
     assert label == expected
 
 
@@ -399,8 +399,8 @@ def test_road_detail_tip_blocked_occupied_exact():
     ps = _mock_public_state_for_node5()
     ps.board.buildings[0] = (Color.BLUE, SETTLEMENT)
     label = _road_node_detail(ps, (0, 5), network_nodes=set(), extra_occupied=None)
-    # Tip 0 is occupied, so no extends
-    assert label == " -> Targets: Node 0 [5p]✗"
+    # Tip 0 is occupied, so no extends — now shows resources/rolls
+    assert label == " -> Targets: Node 0 [8-Wd | 5p]✗"
 
 
 def test_road_detail_tip_blocked_too_close_shows_extends_exact():
@@ -475,7 +475,8 @@ def test_build_moves_initial_settlement_exact():
     from catan_llm.format.moves import _setup_settlement_moves
     moves = _setup_settlement_moves(a, ps)
     # First road is (0,1) — longest-road hint is intentionally omitted for BUILD_INITIAL_SETTLEMENT
-    expected = "Settlement Node 0 [8-Wd | 5p] | Road (0, 1) -> Targets: Node 2 [0p]✗, Node 6 [5p]✓"
+    # Targets now include resources/rolls (Node 2 has no tiles)
+    expected = "Settlement Node 0 [8-Wd | 5p] | Road (0, 1) -> Targets: Node 2 [no tiles | 0p]✗, Node 6 [6-Wd | 5p]✓"
     assert moves[0].label == expected
     assert "Longest road" not in moves[0].label
 

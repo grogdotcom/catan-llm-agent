@@ -486,13 +486,13 @@ def test_get_complete_prompt_five_sections_in_strict_order():
     playable = game.playable_actions
     obs = _observation_shim(ps, game.state.current_prompt, Color.RED, playable)
     out = get_complete_prompt(ps, Color.RED, playable, observation=obs, turn_number=5)
-    # all canonical sections present
-    for header in ["[FULL BOARD MAP", "[CURRENT BOARD OCCUPANCY", "ROBBER:", "[PLAYERS]", "[PLAYABLE MOVES]"]:
+    # all canonical sections present (accept grouped header "[PLAYABLE MOVES - INITIAL PLACEMENT]")
+    for header in ["[FULL BOARD MAP", "[CURRENT BOARD OCCUPANCY", "ROBBER:", "[PLAYERS]", "[PLAYABLE MOVES"]:
         assert header in out, f"missing {header}"
     assert out.index("[FULL BOARD MAP") < out.index("[CURRENT BOARD OCCUPANCY")
     assert out.index("[CURRENT BOARD OCCUPANCY") < out.index("ROBBER:")
     assert out.index("ROBBER:") < out.index("[PLAYERS]")
-    assert out.index("[PLAYERS]") < out.index("[PLAYABLE MOVES]")
+    assert out.index("[PLAYERS]") < out.index("[PLAYABLE MOVES")
     assert "[DECISION REQUIRED]" in out
 
 
@@ -527,14 +527,14 @@ def test_get_complete_prompt_include_footer_false_omits_footer():
     out = get_complete_prompt(ps, Color.RED, [], include_header=False, include_footer=False)
     assert "[DECISION REQUIRED]" not in out
     # moves is last section when footer omitted
-    assert out.rstrip().endswith(tuple("0123456789.")) or "[PLAYABLE MOVES]" in out
+    assert out.rstrip().endswith(tuple("0123456789.")) or "[PLAYABLE MOVES" in out
 
 
 def test_get_complete_prompt_empty_moves_shows_no_moves():
     game = create_empty_game(seed=42)
     ps = build_public_state(game)
     out = get_complete_prompt(ps, Color.RED, [], include_header=False, include_footer=False)
-    assert "[PLAYABLE MOVES]" in out
+    assert "[PLAYABLE MOVES" in out
     assert "(no moves available)" in out
 
 
@@ -543,9 +543,9 @@ def test_get_complete_prompt_without_observation_uses_shim_and_still_rich():
     ps = build_public_state(game)
     playable = game.playable_actions  # initial settlement placements
     out = get_complete_prompt(ps, Color.RED, playable, current_prompt=ActionPrompt.BUILD_INITIAL_SETTLEMENT, turn_number=0)
-    # Without observation, shim still produces rich settlement labels with Tile/pips
+    # Without observation, shim still produces rich settlement labels with Tile/pips (grouped initial placement)
     assert "Node" in out and "p" in out
-    assert "Settlement Node" in out
+    assert "Node" in out  # grouped header drops 'Settlement' prefix but still Node
     # phase tag inside moves block
     assert "[PHASE: BUILD_INITIAL_SETTLEMENT]" in out
 
@@ -635,7 +635,7 @@ def test_get_complete_prompt_infers_public_state_and_color_from_observation():
     out = get_complete_prompt(observation=obs, playable_actions=playable)
     assert "[CURRENT PLAYER: ORANGE]" in out
     assert "[FULL BOARD MAP - 19 HEXES]" in out
-    assert "[PLAYABLE MOVES]" in out
+    assert "[PLAYABLE MOVES" in out
 
 
 def test_get_complete_prompt_playable_actions_inferred_from_observation_when_none():
@@ -645,9 +645,9 @@ def test_get_complete_prompt_playable_actions_inferred_from_observation_when_non
     obs = _observation_shim(ps, game.state.current_prompt, Color.RED, playable)
     out = get_complete_prompt(public_state=ps, observation=obs, current_player_color=Color.RED, playable_actions=None)
     # should have used obs.playable_actions
-    assert "[PLAYABLE MOVES]" in out
-    # there are settlement moves
-    assert "Settlement Node" in out
+    assert "[PLAYABLE MOVES" in out
+    # there are settlement moves (grouped header is Node)
+    assert "Node" in out
 
 
 def test_get_complete_prompt_aliases_equal():
@@ -760,6 +760,6 @@ def test_agent_build_full_prompt_uses_complete_order():
     assert out.index("[FULL BOARD MAP") < out.index("[CURRENT BOARD OCCUPANCY")
     assert out.index("[CURRENT BOARD OCCUPANCY") < out.index("ROBBER:")
     assert out.index("ROBBER:") < out.index("[PLAYERS]")
-    assert out.index("[PLAYERS]") < out.index("[PLAYABLE MOVES]")
+    assert out.index("[PLAYERS]") < out.index("[PLAYABLE MOVES")
     assert "[CURRENT PLAYER: RED]" in out
     assert "[TURN: 3]" in out
