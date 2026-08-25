@@ -469,14 +469,42 @@ def test_build_moves_buy_dev_card_exact():
 
 
 def test_build_moves_initial_settlement_exact():
-    # Uses tiny mock to hard-code expected settlement+road (longest-road omitted for initial placement)
+    # Pruning: nodes are filtered only if BOTH pip <7 AND no port
+    # (viable = pip>=7 OR touches a port)
+    from catan_llm.format.moves import _setup_settlement_moves
     ps = _mock_public_state_for_node5()
     a = Action(Color.RED, ActionType.BUILD_SETTLEMENT, 0)
-    from catan_llm.format.moves import _setup_settlement_moves
-    moves = _setup_settlement_moves(a, ps)
-    # First road is (0,1) — longest-road hint is intentionally omitted for BUILD_INITIAL_SETTLEMENT
-    # Targets now include resources/rolls (Node 2 has no tiles)
-    expected = "Settlement Node 0 [8-Wd | 5p] | Road (0, 1) -> Targets: Node 2 [no tiles | 0p]✗, Node 6 [6-Wd | 5p]✓"
+    # Node 0 in the mock has 5p and no port -> pruned (fails both)
+    assert _setup_settlement_moves(a, ps) == []
+
+    # Viable node: construct a state where Node 0 has 10p and a 3:1 port
+    from catanatron.models.enums import WOOD
+    from catanatron.models.public_state import PublicState, PublicBoard, PublicMap, PublicPlayer
+
+    tiles = {0: (WOOD, 8), 1: (WOOD, 6)}
+    tile_coordinates = {0: (0, 0, 0), 1: (1, -1, 0)}
+    adjacent_tiles = {0: (0, 1), 5: (0, 1), 1: (0,), 6: (1,)}
+    land_nodes = frozenset([0, 1, 5, 6, 20])
+    ports = {0: (None, (0, 5))}  # generic 3:1 at Node 0
+    public_map = PublicMap(
+        tiles={0: (WOOD, 8), 1: (WOOD, 6)},
+        tile_coordinates=tile_coordinates,
+        ports=ports,
+        adjacent_tiles=adjacent_tiles,
+        land_nodes=land_nodes,
+    )
+    board = PublicBoard(
+        buildings={}, roads={}, robber_tile_id=1,
+        longest_road_color=None, longest_road_length=0, map=public_map,
+    )
+    players = {
+        Color.RED: PublicPlayer(public_vps=0, has_army=False, has_road=False, longest_road_length=0, roads_left=15, settlements_left=5, cities_left=4, has_rolled=False, hand_resource_count=0, hand_dev_count=0, played_knight=0, played_monopoly=0, played_road_building=0, played_year_of_plenty=0, played_victory_point=0),
+        Color.BLUE: PublicPlayer(public_vps=0, has_army=False, has_road=False, longest_road_length=0, roads_left=15, settlements_left=5, cities_left=4, has_rolled=False, hand_resource_count=0, hand_dev_count=0, played_knight=0, played_monopoly=0, played_road_building=0, played_year_of_plenty=0, played_victory_point=0),
+    }
+    ps_viable = PublicState(board=board, players=players)
+    moves = _setup_settlement_moves(a, ps_viable)
+    # First road is (0,1) — compressed to " -> Target N2 (0p), N6 (5p)" (header already has full detail)
+    expected = "Settlement Node 0 [8-Wd, 6-Wd | 10p] | Road (0, 1) -> Target N2 (0p), N6 (5p)"
     assert moves[0].label == expected
     assert "Longest road" not in moves[0].label
 

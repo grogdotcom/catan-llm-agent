@@ -272,6 +272,11 @@ def _format_pieces_for_overview(player_data) -> str:
     )
 
 
+def _format_pieces_compact(player_data) -> str:
+    """Compact pieces: '5/4/15' (S/C/R)."""
+    return f"{player_data.settlements_left}/{player_data.cities_left}/{player_data.roads_left}"
+
+
 def _format_ports_for_overview(board_player) -> str:
     """Ports controlled by a player (from occupancy). Abbreviated."""
     if board_player is None:
@@ -315,6 +320,7 @@ def get_players_summary(
     public_state: PublicState,
     current_player_color,
     current_player_inventory: Optional[Inventory] = None,
+    current_prompt=None,
 ) -> str:
     """Consolidated per-player overview for LLM consumption.
 
@@ -336,23 +342,118 @@ def get_players_summary(
             observer; enables exact resources/dev, and hidden-VP math
             (actual_vps - public_vps). When None, even the observer is
             shown as hidden (useful for tests).
+        current_prompt: Optional current ActionPrompt. When it is an
+            initial-setup prompt (BUILD_INITIAL_SETTLEMENT/ROAD) a
+            compressed variant is used that omits uniform zero fields
+            (Resources/Dev/VP/Roads/Army when all zero) and collapses
+            identical players to one line, but still shows per-player
+            Pips/Ports/Pieces — and Resources/Dev if any player has
+            inventory (e.g. after 2nd settlement).
 
     Returns:
-        Multiline string beginning with ``[PLAYERS]`` and one ``- COLOR``
-        line per player. Each line is ``Resources: … | Dev: … | VP: … |
-        Roads: … | Army: … | Ports: … | Pips: … | Pieces: …`` so the LLM
-        can scan player-by-player without joining two separate sections.
+        Multiline string beginning with ``[PLAYERS]`` (or
+        ``[PLAYERS - INITIAL SETUP]`` for the compressed variant) and
+        one ``- COLOR`` line per player. Each line is ``Resources: … |
+        Dev: … | VP: … | Roads: … | Army: … | Ports: … | Pips: … |
+        Pieces: …`` so the LLM can scan player-by-player without
+        joining two separate sections.
 
     Example:
-        ``- RED (YOU): Resources: WOOD: 2 | Dev: KNIGHT: 1 (Played: KNIGHT: 1) | VP: 5 (3 visible + 2 hidden) | Roads: 3 | Army: 1 knight | Ports: 3:1 | Pips: 9 (SHEEP: 9) | Pieces: 3 settlements, 4 cities, 12 roads left``
+        ``- RED (YOU): Resources: WOOD: 2 | Dev: KNIGHT: 1 (Played: KNIGHT: 1) | VP: 5 (3 visible + 2 hidden) | Roads: 3 | Army: 1 knight | Ports: 3:1 | Pips: 9 (SHEEP: 9) | Pieces: 3/4/12``
     """
     # Lazily import to avoid circular dependency (board imports models only)
     from catan_llm.format.board import gather_board_occupancy_data
+
+    # Detect initial-setup prompts for compressed variant
+    is_initial = False
+    if current_prompt is not None:
+        pname = getattr(current_prompt, "name", str(current_prompt))
+        is_initial = pname in ("BUILD_INITIAL_SETTLEMENT", "BUILD_INITIAL_ROAD")
 
     occupancy = gather_board_occupancy_data(public_state)
     # PlayerBoardData is keyed by color name string
     occ_by_color: Dict[str, object] = {p.color: p for p in occupancy.players}
 
+    # --- Initial-setup compressed variant ---
+    if is_initial:
+        # Use compact pieces (5/4/15) and omit uniform zero fields
+        # Check if any player has non-zero Resources/Dev/VP/Roads/Army
+        has_any_resources = False
+        has_any_dev = False
+        has_any_vp = False
+        has_any_roads = False
+        has_any_army = False
+        per_player_vals = []
+        for color, player_data in public_state.players.items():
+            is_current = (color == current_player_color)
+            inv = current_player_inventory if is_current else None
+            # Resources non-zero?
+            if is_current and inv is not None:
+                if any(getattr(inv, r, 0) > 0 for r in ("wood", "brick", "sheep", "wheat", "ore")):
+                    has_any_resources = True
+            else:
+                if player_data.hand_resource_count > 0:
+                    has_any_resources = True
+            # Dev non-zero?
+            if is_current and inv is not None:
+                if any(getattr(inv, r, 0) > 0 for r in ("knight", "year_of_plenty", "monopoly", "road_building", "victory_point")):
+                    has_any_dev = True
+            if player_data.hand_dev_count > 0 or player_data.played_knight > 0 or player_data.played_year_of_plenty > 0 or player_data.played_monopoly > 0 or player_data.played_road_building > 0 or player_data.played_victory_point > 0:
+                has_any_dev = True
+            if player_data.public_vps != 0:
+                has_any_vp = True
+            if player_data.longest_road_length != 0 or player_data.has_road:
+                has_any_roads = True
+            if player_data.played_knight != 0 or player_data.has_army:
+                has_any_army = True
+            board_player = occ_by_color.get(_name_of(color))
+            ports = _format_ports_for_overview(board_player)
+            pips = _format_pips_for_overview(board_player)
+            pieces = _format_pieces_compact(player_data)
+            per_player_vals.append((color, _name_of(color), pips, ports, pieces))
+
+        # If all players identical (start of game: 5/4/15, 0 pips, no ports) collapse to one line
+        all_same = len(set((p, ports, pcs) for _, _, p, ports, pcs in per_player_vals)) == 1
+        if all_same and not has_any_resources and not has_any_dev and not has_any_vp and not has_any_roads and not has_any_army:
+            you_name = _name_of(current_player_color) if current_player_color is not None else "RED"
+            # Use first player's pieces/pips/ports as representative
+            _, _, pips0, ports0, pieces0 = per_player_vals[0] if per_player_vals else (None, None, "0", "None", "5/4/15")
+            # Keep header distinct so tests can detect variant, but still starts with [PLAYERS
+            return f"[PLAYERS] - INITIAL SETUP\nAll players start {pieces0} (S/C/R), 0 VP, 0 pips, no ports/resources — {you_name} (YOU) to place"
+
+        # Otherwise per-player compact (only Pips/Ports/Pieces, plus any non-zero Resources/Dev/VP/Roads/Army if needed)
+        lines = ["[PLAYERS] - INITIAL SETUP"]
+        for color, player_data in public_state.players.items():
+            color_name = _name_of(color)
+            is_current = (color == current_player_color)
+            tag = " (YOU)" if is_current else ""
+            board_player = occ_by_color.get(color_name)
+            ports = _format_ports_for_overview(board_player)
+            pips = _format_pips_for_overview(board_player)
+            pieces = _format_pieces_compact(player_data)
+            parts = [f"Pips: {pips}", f"Ports: {ports}", f"Pieces: {pieces}"]
+            # Include Resources/Dev/VP/Roads/Army only if any player has non-zero in that category
+            if has_any_resources:
+                inv = current_player_inventory if is_current else None
+                resources = _format_resources_for_overview(player_data, inv, is_current)
+                parts.insert(0, f"Resources: {resources}")
+            if has_any_dev:
+                inv = current_player_inventory if is_current else None
+                dev = _format_dev_for_overview(player_data, inv, is_current)
+                parts.insert(1 if has_any_resources else 0, f"Dev: {dev}")
+            if has_any_vp:
+                vp = _format_vp_for_overview(player_data, current_player_inventory if is_current else None, is_current)
+                parts.append(f"VP: {vp}")
+            if has_any_roads:
+                road = _format_road_for_overview(player_data, public_state, color)
+                parts.append(f"Roads: {road}")
+            if has_any_army:
+                army = _format_army_for_overview(player_data)
+                parts.append(f"Army: {army}")
+            lines.append(f"- {color_name}{tag}: " + " | ".join(parts))
+        return "\n".join(lines)
+
+    # --- Midgame (default) — keep full detail but compress Pieces to compact form ---
     lines = ["[PLAYERS]"]
     for color, player_data in public_state.players.items():
         color_name = _name_of(color)
@@ -369,7 +470,7 @@ def get_players_summary(
         board_player = occ_by_color.get(color_name)
         ports = _format_ports_for_overview(board_player)
         pips = _format_pips_for_overview(board_player)
-        pieces = _format_pieces_for_overview(player_data)
+        pieces = _format_pieces_compact(player_data)
 
         lines.append(
             f"- {color_name}{tag}: "

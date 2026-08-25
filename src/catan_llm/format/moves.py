@@ -386,6 +386,66 @@ def _road_node_detail(
     return " -> Targets: " + ", ".join(parts)
 
 
+def _road_node_detail_compact(
+    public_state: Optional[PublicState],
+    edge: Tuple[int, int],
+    exclude_nodes: Optional[Set[int]] = None,
+    network_nodes: Optional[Set[int]] = None,
+    extra_occupied: Optional[Set[int]] = None,
+) -> str:
+    """Compressed road targets for initial placement: `` -> Target N2 (7p), N6 (8p)``.
+
+    Keeps Node header informative (printed once per cluster) and compresses
+    Road lines to only target Node IDs and their pip values, as requested:
+    ``Node 0 [11-Sh, 4-Br, 9-Br | 9p]: Action 1: + Road (0,1) -> Target N2 (7p), N6 (8p)``.
+    Shares the same tip/forward logic as :func:`_road_node_detail` but omits
+    resource breakdown and buildability marks.
+    """
+    if public_state is None:
+        return ""
+    a, b = tuple(sorted(edge))
+    exclude = set(exclude_nodes or [])
+
+    if network_nodes is not None:
+        new_tips = [n for n in (a, b) if n not in network_nodes and n not in exclude]
+        if not new_tips:
+            new_tips = [n for n in (a, b) if n not in exclude]
+            if not new_tips:
+                return ""
+        new_tips = sorted(new_tips)
+        if len(new_tips) > 1:
+            new_tips = new_tips[:1]
+    else:
+        candidates = [n for n in (a, b) if n not in exclude]
+        if not candidates:
+            return ""
+        new_tips = sorted(candidates)[:1]
+
+    tip = new_tips[0]
+    tip_occupied = (public_state.board.buildings.get(tip) is not None) or (
+        extra_occupied is not None and tip in extra_occupied
+    )
+
+    forward: List[int] = []
+    if not tip_occupied:
+        for nb in STATIC_GRAPH.neighbors(tip):
+            if nb in (a, b):
+                continue
+            if nb in exclude:
+                continue
+            forward.append(nb)
+        forward = sorted(forward)
+
+    targets: List[int] = forward if forward else [tip]
+
+    parts: List[str] = []
+    for nid in targets:
+        pips = _node_pip_total(public_state, nid)
+        parts.append(f"N{nid} ({pips}p)")
+
+    return " -> Target " + ", ".join(parts)
+
+
 def _coordinate_tile_label(public_state: Optional[PublicState], coordinate) -> str:
     """Render a coordinate as its board-map tile ID (falls back to the raw
     coordinate when the public map is unavailable)."""
@@ -628,6 +688,21 @@ def _road_building_moves(play_card: Action, public_state: PublicState) -> List[M
     return moves
 
 
+def _is_viable_initial_node(public_state: Optional[PublicState], node_id: int) -> bool:
+    """Whether a node is viable for initial placement under the pruned policy.
+
+    Viable means: total pip count >= 7 **or** the node touches a port.
+    Nodes that are both low-pip (<7) *and* non-port are pruned, reducing the
+    ~150 settlement/road pairs to viable openers.
+    """
+    if public_state is None:
+        return True  # no state to evaluate — don't filter
+    if _node_pip_total(public_state, node_id) >= 7:
+        return True
+    _, port = get_adjacent_hex_info(public_state, node_id)
+    return port is not None
+
+
 def _setup_settlement_moves(settle: Action, public_state: PublicState) -> List[Move]:
     """Expand an initial-placement settlement into concrete settlement + road moves.
 
@@ -638,9 +713,16 @@ def _setup_settlement_moves(settle: Action, public_state: PublicState) -> List[M
     (they already own one settlement), the label also includes the starting
     resources that settlement would yield (one per adjacent non-desert tile),
     mirroring the history view.
+
+    Pruning: nodes with total pips < 7 *and* without a port are filtered out
+    (they produce no moves) to reduce the ~150 initial pairs to viable openers.
+    Viable = pips >=7 **or** touches a port.
     """
     color = settle.color
     node = settle.value
+    # --- viability filter: pip >=7 OR touches a port ---
+    if not _is_viable_initial_node(public_state, node):
+        return []
     road_options = _land_edges_from(public_state, color, {node})
     # Detect second initial settlement: player already has one settlement.
     existing = sum(1 for _, (c, _) in public_state.board.buildings.items() if c == color)
@@ -665,9 +747,11 @@ def _setup_settlement_moves(settle: Action, public_state: PublicState) -> List[M
     # Longest-road hint is intentionally omitted for initial placement:
     # it is always 0 -> 1 (+1) at this stage (needs 5 to claim) and just
     # bloats every one of the ~60-110 options without signal.
+    # Road targets are compressed to " -> Target N2 (7p), N6 (8p)" — header
+    # already carries full “[11-Sh, 4-Br | 9p]” detail, road lines need only IDs+pips.
     return [
         Move(
-            label=f"Settlement {settle_desc_with_resources} | Road {edge}{_road_node_detail(public_state, edge, exclude_nodes={node}, network_nodes={node}, extra_occupied={node}, extra_occupied_color=color)}",
+            label=f"Settlement {settle_desc_with_resources} | Road {edge}{_road_node_detail_compact(public_state, edge, exclude_nodes={node}, network_nodes={node}, extra_occupied={node})}",
             actions=[settle, Action(color, ActionType.BUILD_ROAD, edge)],
         )
         for edge in road_options

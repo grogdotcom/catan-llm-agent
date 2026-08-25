@@ -28,7 +28,7 @@ from catan_llm.format.players import (
 )
 
 
-def get_game_state_summary(public_state: PublicState, current_player_color, current_player_inventory: Optional[Inventory] = None) -> str:
+def get_game_state_summary(public_state: PublicState, current_player_color, current_player_inventory: Optional[Inventory] = None, current_prompt=None) -> str:
     """
     Create a comprehensive game state summary for LLM consumption.
     Includes board map, occupancy, and a consolidated player-by-player
@@ -40,6 +40,9 @@ def get_game_state_summary(public_state: PublicState, current_player_color, curr
         public_state: The public state object from Observation agent
         current_player_color: The color of the current player
         current_player_inventory: Optional Inventory object for current player
+        current_prompt: Optional current ActionPrompt — when it is an
+            initial-setup prompt a compressed ``[PLAYERS - INITIAL SETUP]``
+            variant is used (see :func:`get_players_summary`).
 
     Returns:
         str: Comprehensive game state summary
@@ -50,7 +53,7 @@ def get_game_state_summary(public_state: PublicState, current_player_color, curr
     sections.append("\n")
     sections.append(get_board_occupancy(public_state))
     sections.append("\n")
-    sections.append(get_players_summary(public_state, current_player_color, current_player_inventory))
+    sections.append(get_players_summary(public_state, current_player_color, current_player_inventory, current_prompt=current_prompt))
 
     return "\n".join(sections)
 
@@ -424,8 +427,8 @@ def get_complete_prompt(
         if header_lines:
             sections.append("\n".join(header_lines))
 
-    # 4. Consolidated per-player inventories
-    sections.append(get_players_summary(public_state, current_player_color, current_player_inventory))
+    # 4. Consolidated per-player inventories (compressed for initial setup)
+    sections.append(get_players_summary(public_state, current_player_color, current_player_inventory, current_prompt=resolved_prompt))
 
     # 5. Recent turn summaries — last 8 turns (after inventories, before moves)
     history_records = _resolve_history_records(public_history, observation)
