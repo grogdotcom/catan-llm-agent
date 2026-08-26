@@ -689,18 +689,12 @@ def _road_building_moves(play_card: Action, public_state: PublicState) -> List[M
 
 
 def _is_viable_initial_node(public_state: Optional[PublicState], node_id: int) -> bool:
-    """Whether a node is viable for initial placement under the pruned policy.
+    """Whether a node is viable for initial placement.
 
-    Viable means: total pip count >= 7 **or** the node touches a port.
-    Nodes that are both low-pip (<7) *and* non-port are pruned, reducing the
-    ~150 settlement/road pairs to viable openers.
+    Filtering removed — all land nodes are viable. Kept for compatibility;
+    always returns True.
     """
-    if public_state is None:
-        return True  # no state to evaluate — don't filter
-    if _node_pip_total(public_state, node_id) >= 7:
-        return True
-    _, port = get_adjacent_hex_info(public_state, node_id)
-    return port is not None
+    return True
 
 
 def _setup_settlement_moves(settle: Action, public_state: PublicState) -> List[Move]:
@@ -714,15 +708,10 @@ def _setup_settlement_moves(settle: Action, public_state: PublicState) -> List[M
     resources that settlement would yield (one per adjacent non-desert tile),
     mirroring the history view.
 
-    Pruning: nodes with total pips < 7 *and* without a port are filtered out
-    (they produce no moves) to reduce the ~150 initial pairs to viable openers.
-    Viable = pips >=7 **or** touches a port.
+    No pruning — all land nodes produce moves (previously filtered pip<7 non-port).
     """
     color = settle.color
     node = settle.value
-    # --- viability filter: pip >=7 OR touches a port ---
-    if not _is_viable_initial_node(public_state, node):
-        return []
     road_options = _land_edges_from(public_state, color, {node})
     # Detect second initial settlement: player already has one settlement.
     existing = sum(1 for _, (c, _) in public_state.board.buildings.items() if c == color)

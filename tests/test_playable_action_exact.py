@@ -469,13 +469,14 @@ def test_build_moves_buy_dev_card_exact():
 
 
 def test_build_moves_initial_settlement_exact():
-    # Pruning: nodes are filtered only if BOTH pip <7 AND no port
-    # (viable = pip>=7 OR touches a port)
+    # Filtering removed — all land nodes viable (previously pruned pip<7 non-port)
     from catan_llm.format.moves import _setup_settlement_moves
     ps = _mock_public_state_for_node5()
     a = Action(Color.RED, ActionType.BUILD_SETTLEMENT, 0)
-    # Node 0 in the mock has 5p and no port -> pruned (fails both)
-    assert _setup_settlement_moves(a, ps) == []
+    # Node 0 in the mock has 5p and no port -> previously pruned, now viable
+    moves_unfiltered = _setup_settlement_moves(a, ps)
+    assert len(moves_unfiltered) > 0
+    assert moves_unfiltered[0].label.startswith("Settlement Node 0 [8-Wd | 5p]")
 
     # Viable node: construct a state where Node 0 has 10p and a 3:1 port
     from catanatron.models.enums import WOOD
