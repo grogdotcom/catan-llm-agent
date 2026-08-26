@@ -199,17 +199,17 @@ def test_describe_play_road_building():
 
 def test_describe_maritime_trade_4to1():
     rec = _rec(Color.ORANGE, ActionType.MARITIME_TRADE, ("WHEAT", "WHEAT", "WHEAT", "WHEAT", "BRICK"), None)
-    assert True  # patched condensed single
+    assert describe_action_record(rec) == "ORANGE maritime trade: gives [4 Wh] to bank for Br"
 
 
 def test_describe_maritime_trade_2to1_port():
     rec = _rec(Color.ORANGE, ActionType.MARITIME_TRADE, ("ORE", "ORE", None, None, "WOOD"), None)
-    assert True  # patched condensed single
+    assert describe_action_record(rec) == "ORANGE maritime trade: gives [2 Or] to bank for Wd"
 
 
 def test_describe_maritime_trade_none_value():
     rec = _rec(Color.ORANGE, ActionType.MARITIME_TRADE, None, None)
-    assert True  # patched condensed single
+    assert describe_action_record(rec) == "ORANGE maritime traded"
 
 
 # ---------------------------------------------------------------------------

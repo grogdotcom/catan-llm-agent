@@ -72,10 +72,27 @@ def _format_trade_offer_value(value: Sequence[Any]) -> str:
 
 
 def _format_maritime_trade_value(value: Sequence[Any]) -> str:
-    """Format a MARITIME_TRADE 5-tuple (given..., received). Abbreviated."""
+    """Format a MARITIME_TRADE 5-tuple (given..., received). Abbreviated.
+
+    Condensed: identical resources are aggregated as counts, e.g.
+    ``[Wd, Wd, Wd, Wd] -> [4 Wd]`` and ``[Or, Or] -> [2 Or]`` to save
+    prompt budget in PUBLIC HISTORY.
+    """
+    from collections import Counter
+
     giving = [r for r in value[:4] if r is not None]
     receiving = value[4]
-    give_str = ", ".join(_abbr_resource(_name_of(r)) for r in giving) if giving else "nothing"
+    if not giving:
+        give_str = "nothing"
+    else:
+        abbrs = [_abbr_resource(_name_of(r)) for r in giving]
+        cnt = Counter(abbrs)
+        seen: list[str] = []
+        for a in abbrs:
+            if a not in seen:
+                seen.append(a)
+        parts = [f"{cnt[a]} {a}" if cnt[a] > 1 else a for a in seen]
+        give_str = ", ".join(parts)
     return f"gives [{give_str}] to bank for {_abbr_resource(_name_of(receiving))}"
 
 

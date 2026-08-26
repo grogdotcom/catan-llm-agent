@@ -184,12 +184,12 @@ def test_label_discard_exact():
 def test_label_maritime_trade_exact():
     # 4 WOOD -> BRICK
     a = Action(Color.RED, ActionType.MARITIME_TRADE, ("WOOD", "WOOD", "WOOD", "WOOD", "BRICK"))
-    assert _label_action(a, None) == "Maritime trade: gives [Wd, Wd, Wd, Wd] to bank for Br"
+    assert _label_action(a, None) == "Maritime trade: gives [4 Wd] to bank for Br"
 
 
 def test_label_maritime_trade_port_exact():
     a = Action(Color.RED, ActionType.MARITIME_TRADE, ("ORE", "ORE", None, None, "WOOD"))
-    assert _label_action(a, None) == "Maritime trade: gives [Or, Or] to bank for Wd"
+    assert _label_action(a, None) == "Maritime trade: gives [2 Or] to bank for Wd"
 
 
 def test_label_offer_trade_exact():
@@ -424,7 +424,7 @@ def test_build_moves_discard_exact():
 def test_build_moves_maritime_trade_exact():
     a = Action(Color.RED, ActionType.MARITIME_TRADE, ("WOOD", "WOOD", "WOOD", "WOOD", "BRICK"))
     moves = build_moves([a], observation=None)
-    assert moves[0].label == "Maritime trade: gives [Wd, Wd, Wd, Wd] to bank for Br"
+    assert moves[0].label == "Maritime trade: gives [4 Wd] to bank for Br"
 
 
 def test_build_moves_offer_trade_exact():
@@ -565,4 +565,4 @@ def test_build_moves_discard_exact_via_build_moves():
 def test_build_moves_maritime_exact_via_build_moves():
     a = Action(Color.RED, ActionType.MARITIME_TRADE, ("SHEEP", "SHEEP", "SHEEP", None, "WOOD"))
     moves = build_moves([a], observation=None)
-    assert moves[0].label == "Maritime trade: gives [Sh, Sh, Sh] to bank for Wd"
+    assert moves[0].label == "Maritime trade: gives [3 Sh] to bank for Wd"

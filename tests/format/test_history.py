@@ -256,12 +256,12 @@ def test_describe_play_road_building():
 
 def test_describe_maritime_trade_4to1():
     rec = _rec(Color.ORANGE, ActionType.MARITIME_TRADE, ("WHEAT", "WHEAT", "WHEAT", "WHEAT", "BRICK"), None)
-    assert describe_action_record(rec) == "ORANGE maritime trade: gives [Wh, Wh, Wh, Wh] to bank for Br"
+    assert describe_action_record(rec) == "ORANGE maritime trade: gives [4 Wh] to bank for Br"
 
 
 def test_describe_maritime_trade_2to1_port():
     rec = _rec(Color.ORANGE, ActionType.MARITIME_TRADE, ("ORE", "ORE", None, None, "WOOD"), None)
-    assert describe_action_record(rec) == "ORANGE maritime trade: gives [Or, Or] to bank for Wd"
+    assert describe_action_record(rec) == "ORANGE maritime trade: gives [2 Or] to bank for Wd"
 
 
 def test_describe_maritime_trade_none_value():
@@ -668,6 +668,133 @@ def test_format_public_history_window_larger_than_total():
     assert "[TURN 1 (RED)]" in result
     assert "[TURN 2 (BLUE)]" in result
     assert "[Showing last" not in result
+
+
+def test_format_public_history_window_last_twelve_turns():
+    """Exact-string: window_size=12 shows last 12 turns with realistic variety.
+
+    Builds a 15-turn game with diverse actions (maritime trade, city, domestic
+    trade offer+gave, robber steals, Road Building, YOP, Monopoly, Knight,
+    settlements/roads) and asserts the *exact* LLM-facing window string.
+    This demonstrates the previous-action history the agent sees and guards
+    mid-game compression (setup dropped, indicator, absolute numbering).
+    """
+    setup = (
+        _rec(Color.RED, ActionType.BUILD_SETTLEMENT, 0),
+        _rec(Color.RED, ActionType.BUILD_ROAD, (0, 1)),
+        _rec(Color.BLUE, ActionType.BUILD_SETTLEMENT, 5),
+        _rec(Color.BLUE, ActionType.BUILD_ROAD, (5, 6)),
+        _rec(Color.ORANGE, ActionType.BUILD_SETTLEMENT, 10),
+        _rec(Color.ORANGE, ActionType.BUILD_ROAD, (10, 11)),
+        _rec(Color.WHITE, ActionType.BUILD_SETTLEMENT, 15),
+        _rec(Color.WHITE, ActionType.BUILD_ROAD, (15, 16)),
+    )
+    turns_data = [
+        (Color.RED, [(ActionType.ROLL, (3, 2), (3, 2)), (ActionType.BUILD_ROAD, (0, 5)), (ActionType.END_TURN, None)]),
+        (Color.BLUE, [(ActionType.ROLL, (2, 2), (2, 2)), (ActionType.BUY_DEVELOPMENT_CARD, None, "KNIGHT"), (ActionType.END_TURN, None)]),
+        (Color.ORANGE, [(ActionType.ROLL, (4, 4), (4, 4)), (ActionType.BUILD_SETTLEMENT, 20), (ActionType.END_TURN, None)]),
+        (Color.WHITE, [(ActionType.ROLL, (3, 3), (3, 3)), (ActionType.MARITIME_TRADE, ("WOOD", "WOOD", "WOOD", "WOOD", "BRICK")), (ActionType.END_TURN, None)]),
+        (Color.RED, [(ActionType.ROLL, (5, 4), (5, 4)), (ActionType.BUILD_CITY, 0), (ActionType.END_TURN, None)]),
+        (Color.BLUE, [(ActionType.ROLL, (2, 5), (2, 5)), (ActionType.OFFER_TRADE, (1, 0, 0, 0, 0, 0, 1, 0, 0, 0)), (ActionType.CONFIRM_TRADE, (1, 0, 0, 0, 0, 0, 1, 0, 0, 0, Color.WHITE)), (ActionType.END_TURN, None)]),
+        (Color.ORANGE, [(ActionType.ROLL, (3, 4), (3, 4)), (ActionType.MOVE_ROBBER, ((0, 0, 0), Color.RED), "WOOD"), (ActionType.END_TURN, None)]),
+        (Color.WHITE, [(ActionType.ROLL, (4, 3), (4, 3)), (ActionType.PLAY_ROAD_BUILDING, None), (ActionType.BUILD_ROAD, (15, 20)), (ActionType.BUILD_ROAD, (20, 21)), (ActionType.END_TURN, None)]),
+        (Color.RED, [(ActionType.ROLL, (6, 2), (6, 2)), (ActionType.PLAY_YEAR_OF_PLENTY, ("WOOD", "BRICK")), (ActionType.END_TURN, None)]),
+        (Color.BLUE, [(ActionType.ROLL, (5, 3), (5, 3)), (ActionType.PLAY_MONOPOLY, "ORE"), (ActionType.END_TURN, None)]),
+        (Color.ORANGE, [(ActionType.ROLL, (6, 6), (6, 6)), (ActionType.PLAY_KNIGHT_CARD, None), (ActionType.MOVE_ROBBER, ((1, -1, 0), Color.BLUE), None), (ActionType.END_TURN, None)]),
+        (Color.WHITE, [(ActionType.ROLL, (3, 5), (3, 5)), (ActionType.BUILD_SETTLEMENT, 25), (ActionType.BUILD_ROAD, (25, 26)), (ActionType.END_TURN, None)]),
+        (Color.RED, [(ActionType.ROLL, (4, 2), (4, 2)), (ActionType.MARITIME_TRADE, ("ORE", "ORE", None, None, "WOOD")), (ActionType.END_TURN, None)]),
+        (Color.BLUE, [(ActionType.ROLL, (2, 4), (2, 4)), (ActionType.OFFER_TRADE, (0, 0, 1, 0, 0, 0, 0, 0, 1, 0)), (ActionType.END_TURN, None)]),
+        (Color.ORANGE, [(ActionType.ROLL, (5, 5), (5, 5)), (ActionType.BUILD_CITY, 10), (ActionType.BUILD_ROAD, (10, 15)), (ActionType.END_TURN, None)]),
+    ]
+    records = list(setup)
+    for color, actions in turns_data:
+        for at, val, *rest in actions:
+            res = rest[0] if rest else None
+            records.append(_rec(color, at, val, res))
+    records = tuple(records)
+
+    result = format_public_history_window(records, window_size=12)
+
+    expected = """[PUBLIC HISTORY]
+[Showing last 12 of 15 turns]
+[TURN 4 (WHITE)]
+  - WHITE rolled 3+3 = 6
+  - WHITE maritime trade: gives [4 Wd] to bank for Br
+  - WHITE ended turn
+[TURN 5 (RED)]
+  - RED rolled 5+4 = 9
+  - RED built C Node 0
+  - RED ended turn
+[TURN 6 (BLUE)]
+  - BLUE rolled 2+5 = 7
+  - BLUE offers [1 Wd] for [1 Br]
+  - BLUE gave WHITE [1 Wd] for [1 Br]
+  - BLUE ended turn
+[TURN 7 (ORANGE)]
+  - ORANGE rolled 3+4 = 7
+  - ORANGE moved robber to (0, 0, 0) and stole WOOD from RED
+  - ORANGE ended turn
+[TURN 8 (WHITE)]
+  - WHITE rolled 4+3 = 7
+  - WHITE played Road Building
+  - WHITE built road (15, 20)
+  - WHITE built road (20, 21)
+  - WHITE ended turn
+[TURN 9 (RED)]
+  - RED rolled 6+2 = 8
+  - RED played YOP: took Wd, Br
+  - RED ended turn
+[TURN 10 (BLUE)]
+  - BLUE rolled 5+3 = 8
+  - BLUE played Monopoly on Or
+  - BLUE ended turn
+[TURN 11 (ORANGE)]
+  - ORANGE rolled 6+6 = 12
+  - ORANGE played Knight
+  - ORANGE moved robber to (1, -1, 0) and stole from BLUE (card hidden)
+  - ORANGE ended turn
+[TURN 12 (WHITE)]
+  - WHITE rolled 3+5 = 8
+  - WHITE built S Node 25
+  - WHITE built road (25, 26)
+  - WHITE ended turn
+[TURN 13 (RED)]
+  - RED rolled 4+2 = 6
+  - RED maritime trade: gives [2 Or] to bank for Wd
+  - RED ended turn
+[TURN 14 (BLUE)]
+  - BLUE rolled 2+4 = 6
+  - BLUE offers [1 Sh] for [1 Wh]
+  - BLUE ended turn
+[TURN 15 (ORANGE)]
+  - ORANGE rolled 5+5 = 10
+  - ORANGE built C Node 10
+  - ORANGE built road (10, 15)
+  - ORANGE ended turn"""
+    assert result == expected
+
+
+def test_format_public_history_window_twelve_equals_total_includes_setup():
+    """Window == total should include setup and emit no truncated indicator."""
+    setup = (
+        _rec(Color.RED, ActionType.BUILD_SETTLEMENT, 0),
+        _rec(Color.RED, ActionType.BUILD_ROAD, (0, 1)),
+        _rec(Color.BLUE, ActionType.BUILD_SETTLEMENT, 5),
+        _rec(Color.BLUE, ActionType.BUILD_ROAD, (5, 6)),
+    )
+    turns = []
+    for i in range(12):
+        turns.append(_rec(Color.RED, ActionType.ROLL, (2, 3), (2, 3)))
+        turns.append(_rec(Color.RED, ActionType.END_TURN))
+    records = setup + tuple(turns)
+
+    result = format_public_history_window(records, window_size=12)
+
+    assert "[SETUP]" in result
+    assert "[Showing last" not in result
+    assert result.count("[TURN") == 12
+    assert "[TURN 1 (RED)]" in result
+    assert "[TURN 12 (RED)]" in result
 
 
 if __name__ == "__main__":
