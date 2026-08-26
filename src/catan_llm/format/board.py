@@ -77,6 +77,9 @@ def get_full_board_map(public_state: PublicState) -> str:
     This is static throughout the game - robber position is not included.
     Now includes adjacent node IDs for each tile.
 
+    Condensed per-tile: ``T4: 5-Or(4p) [1,2,7,8,12,13]`` or ``T11: DESERT [13,14,34,35,36,37]``
+    (abbreviated resources, single-letter tile prefix, pip count with ``p``).
+
     Args:
         public_state: The public state object from Observation agent containing map information
 
@@ -110,16 +113,17 @@ def get_full_board_map(public_state: PublicState) -> str:
             # Desert tile
             resource_pips_str = "DESERT"
         else:
-            # Regular resource tile with roll number
+            # Regular resource tile with roll number — abbreviated: 5-Or(4p)
             resource_name = resource.name if hasattr(resource, 'name') else str(resource)
+            abbr = _abbr_resource(resource_name)
             pips = get_pip_count(roll)
-            resource_pips_str = f"{roll} {resource_name} ({pips} pips)"
+            resource_pips_str = f"{roll}-{abbr}({pips}p)"
 
         # Get adjacent node IDs for this tile
         adjacent_node_ids = tile_to_nodes.get(tile_id, [])
-        nodes_str = f"Nodes: {adjacent_node_ids}" if adjacent_node_ids else "Nodes: []"
+        nodes_str = f"[{','.join(str(n) for n in adjacent_node_ids)}]" if adjacent_node_ids else "[]"
 
-        lines.append(f"Tile {tile_id:>2}: {resource_pips_str}, {nodes_str}")
+        lines.append(f"T{tile_id}: {resource_pips_str} {nodes_str}")
 
     return "\n".join(lines)
 

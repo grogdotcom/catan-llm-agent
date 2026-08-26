@@ -270,14 +270,14 @@ def test_label_move_robber_enriched_exact():
     # Tile 0 (0,0,0) WOOD 8 touches Node0 (RED) and Node1 (BLUE)
     a = Action(Color.RED, ActionType.MOVE_ROBBER, ((0, 0, 0), None))
     label = _label_action(a, ps)
-    assert label == "Move robber to Tile 0: 8-Wd(5p) | BLUE settlement@N1(5p) 5p blk,3c; RED settlement@N0(5p) 5p blk,2c (no steal)"
+    assert label == "Move robber to Tile 0: 8-Wd(5p) | BLUE settlement@N1(5p) 3c; RED settlement@N0(5p) 2c (no steal)"
 
 
 def test_label_move_robber_enriched_steal_exact():
     ps = _mock_public_state_with_settlements()
     a = Action(Color.RED, ActionType.MOVE_ROBBER, ((0, 0, 0), Color.BLUE))
     label = _label_action(a, ps)
-    assert label == "Move robber to Tile 0: 8-Wd(5p) | BLUE settlement@N1(5p) 5p blk,3c; RED settlement@N0(5p) 5p blk,2c and steal from BLUE"
+    assert label == "Move robber to Tile 0: 8-Wd(5p) | BLUE settlement@N1(5p) 3c; RED settlement@N0(5p) 2c and steal from BLUE"
 
 
 # ---------------------------------------------------------------------------
@@ -518,7 +518,7 @@ def test_build_moves_knight_bundling_exact():
     # First follow-up is smallest tile_id (0) with victim BLUE (since BLUE at Node1)
     # Tile 0 detail includes both occupants, sorted BLUE then RED
     first = moves[0]
-    assert first.label == "Play Knight -> move robber to Tile 0: 8-Wd(5p) | BLUE settlement@N1(5p) 5p blk,3c; RED settlement@N0(5p) 5p blk,2c and steal from BLUE"
+    assert first.label == "Play Knight -> move robber to Tile 0: 8-Wd(5p) | BLUE settlement@N1(5p) 3c; RED settlement@N0(5p) 2c and steal from BLUE"
     assert len(first.actions) == 2
     assert first.actions[0] == knight
     assert first.actions[1].action_type == ActionType.MOVE_ROBBER

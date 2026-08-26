@@ -453,9 +453,10 @@ def format_public_history_window(
 ) -> str:
     """Format public_history with a sliding window of the last N turns.
 
-    This function efficiently formats only the last N turns without calculating
-    descriptions for all previous turns. The setup phase is always included if
-    present, as it provides important context about initial placements.
+    Setup is included only when the window covers the full history (early game)
+    or when explicitly requested (``window_size==0``). Once the game has
+    progressed beyond the window (midgame, truncated), setup is omitted to
+    save prompt budget — recent turns carry the relevant signal.
 
     Args:
         records: Observation.public_history (or any ActionRecord sequence).
@@ -530,8 +531,20 @@ def format_public_history_window(
         elif window_size < total_completed:
             sections.append(f"[Showing last {len(windowed)} of {total_completed} turns]")
 
-    # Add setup phase if present
-    if setup_group:
+    # Add setup phase if present — only when not truncated (early game) or explicit setup-only
+    should_include_setup = False
+    if setup_group is not None:
+        if window_size is None:
+            should_include_setup = True
+        elif window_size == 0:
+            should_include_setup = True
+        elif total_completed <= window_size:
+            # Window covers all turns (early game) — setup still relevant
+            should_include_setup = True
+        else:
+            # Midgame truncated — omit setup to save budget
+            should_include_setup = False
+    if should_include_setup and setup_group is not None:
         sections.append(describe_turn(setup_group, turn_label="SETUP", public_state=public_state))
 
     # Add windowed completed turns with numbering.

@@ -640,8 +640,10 @@ def test_get_full_board_map_contains_19_hexes():
     game = create_test_game_empty()
     result = get_full_board_map(build_public_state(game))
     
-    # Count the number of "Tile" lines (should be 19)
-    tile_count = result.count("Tile ")
+    # Count tile lines — now T{id}: format (was Tile )
+    tile_count = sum(1 for line in result.splitlines() if line.startswith("T") and ":" in line and "T" in line[:3])
+    # Each tile line starts with T<id>:
+    tile_count = len([l for l in result.splitlines() if l.startswith("T") and ":" in l])
     assert tile_count == 19
 
 
@@ -700,8 +702,8 @@ def test_get_full_board_map_tile_ids():
     game = create_test_game_empty()
     result = get_full_board_map(build_public_state(game))
     
-    # Should contain tile IDs (exact format may vary)
-    assert "Tile" in result
+    # Should contain tile IDs (exact format may vary) — compact T{id}:
+    assert "T0:" in result or "Tile" in result
 
 
 def test_get_full_board_map_port_nodes():
@@ -709,10 +711,10 @@ def test_get_full_board_map_port_nodes():
     game = create_test_game_empty()
     result = get_full_board_map(build_public_state(game))
     
-    # Board map now contains adjacent node information for each tile
-    assert "Nodes:" in result
+    # Board map now contains adjacent node information for each tile — compact [nodes]
+    assert "[" in result and "]" in result
     # Check that node IDs are in list format
-    assert "Nodes: [" in result
+    assert "T0:" in result
 
 
 def test_get_full_board_map_resource_types():
@@ -774,8 +776,8 @@ def test_get_full_board_map_complete_structure():
     # First line should be the header
     assert lines[0] == "[FULL BOARD MAP - 19 HEXES]"
     
-    # Should have 19 tile lines
-    tile_lines = [line for line in lines if line.startswith("Tile ")]
+    # Should have 19 tile lines — compact T{id}: format
+    tile_lines = [line for line in lines if line.startswith("T") and ":" in line]
     assert len(tile_lines) == 19
     
     # Should NOT have a ports section (feature limitation)
@@ -983,25 +985,25 @@ def test_get_full_board_map_exact_string_empty_game():
     result = get_full_board_map(build_public_state(game))
 
     expected = """[FULL BOARD MAP - 19 HEXES]
-Tile  0: 11 SHEEP (2 pips), Nodes: [0, 1, 2, 3, 4, 5]
-Tile  1: 10 WOOD (3 pips), Nodes: [1, 2, 6, 7, 8, 9]
-Tile  2: 3 BRICK (2 pips), Nodes: [2, 3, 9, 10, 11, 12]
-Tile  3: 6 WOOD (5 pips), Nodes: [3, 4, 12, 13, 14, 15]
-Tile  4: 5 WHEAT (4 pips), Nodes: [4, 5, 15, 16, 17, 18]
-Tile  5: 4 WHEAT (3 pips), Nodes: [0, 5, 16, 19, 20, 21]
-Tile  6: 9 SHEEP (4 pips), Nodes: [0, 1, 6, 20, 22, 23]
-Tile  7: 5 SHEEP (4 pips), Nodes: [7, 8, 24, 25, 26, 27]
-Tile  8: 8 BRICK (5 pips), Nodes: [8, 9, 10, 27, 28, 29]
-Tile  9: 4 WOOD (3 pips), Nodes: [10, 11, 29, 30, 31, 32]
-Tile 10: 11 ORE (2 pips), Nodes: [11, 12, 13, 32, 33, 34]
-Tile 11: DESERT, Nodes: [13, 14, 34, 35, 36, 37]
-Tile 12: 12 WOOD (1 pips), Nodes: [14, 15, 17, 37, 38, 39]
-Tile 13: 9 ORE (4 pips), Nodes: [17, 18, 39, 40, 41, 42]
-Tile 14: 10 BRICK (3 pips), Nodes: [16, 18, 21, 40, 43, 44]
-Tile 15: 8 WHEAT (5 pips), Nodes: [19, 21, 43, 45, 46, 47]
-Tile 16: 3 WHEAT (2 pips), Nodes: [19, 20, 22, 46, 48, 49]
-Tile 17: 6 ORE (5 pips), Nodes: [22, 23, 49, 50, 51, 52]
-Tile 18: 2 SHEEP (1 pips), Nodes: [6, 7, 23, 24, 52, 53]"""
+T0: 11-Sh(2p) [0,1,2,3,4,5]
+T1: 10-Wd(3p) [1,2,6,7,8,9]
+T2: 3-Br(2p) [2,3,9,10,11,12]
+T3: 6-Wd(5p) [3,4,12,13,14,15]
+T4: 5-Wh(4p) [4,5,15,16,17,18]
+T5: 4-Wh(3p) [0,5,16,19,20,21]
+T6: 9-Sh(4p) [0,1,6,20,22,23]
+T7: 5-Sh(4p) [7,8,24,25,26,27]
+T8: 8-Br(5p) [8,9,10,27,28,29]
+T9: 4-Wd(3p) [10,11,29,30,31,32]
+T10: 11-Or(2p) [11,12,13,32,33,34]
+T11: DESERT [13,14,34,35,36,37]
+T12: 12-Wd(1p) [14,15,17,37,38,39]
+T13: 9-Or(4p) [17,18,39,40,41,42]
+T14: 10-Br(3p) [16,18,21,40,43,44]
+T15: 8-Wh(5p) [19,21,43,45,46,47]
+T16: 3-Wh(2p) [19,20,22,46,48,49]
+T17: 6-Or(5p) [22,23,49,50,51,52]
+T18: 2-Sh(1p) [6,7,23,24,52,53]"""
 
     assert result == expected
 
@@ -1012,25 +1014,25 @@ def test_get_full_board_map_exact_string_deterministic_game():
     result = get_full_board_map(build_public_state(game))
 
     expected = """[FULL BOARD MAP - 19 HEXES]
-Tile  0: 11 SHEEP (2 pips), Nodes: [0, 1, 2, 3, 4, 5]
-Tile  1: 10 WOOD (3 pips), Nodes: [1, 2, 6, 7, 8, 9]
-Tile  2: 3 BRICK (2 pips), Nodes: [2, 3, 9, 10, 11, 12]
-Tile  3: 6 WOOD (5 pips), Nodes: [3, 4, 12, 13, 14, 15]
-Tile  4: 5 WHEAT (4 pips), Nodes: [4, 5, 15, 16, 17, 18]
-Tile  5: 4 WHEAT (3 pips), Nodes: [0, 5, 16, 19, 20, 21]
-Tile  6: 9 SHEEP (4 pips), Nodes: [0, 1, 6, 20, 22, 23]
-Tile  7: 5 SHEEP (4 pips), Nodes: [7, 8, 24, 25, 26, 27]
-Tile  8: 8 BRICK (5 pips), Nodes: [8, 9, 10, 27, 28, 29]
-Tile  9: 4 WOOD (3 pips), Nodes: [10, 11, 29, 30, 31, 32]
-Tile 10: 11 ORE (2 pips), Nodes: [11, 12, 13, 32, 33, 34]
-Tile 11: DESERT, Nodes: [13, 14, 34, 35, 36, 37]
-Tile 12: 12 WOOD (1 pips), Nodes: [14, 15, 17, 37, 38, 39]
-Tile 13: 9 ORE (4 pips), Nodes: [17, 18, 39, 40, 41, 42]
-Tile 14: 10 BRICK (3 pips), Nodes: [16, 18, 21, 40, 43, 44]
-Tile 15: 8 WHEAT (5 pips), Nodes: [19, 21, 43, 45, 46, 47]
-Tile 16: 3 WHEAT (2 pips), Nodes: [19, 20, 22, 46, 48, 49]
-Tile 17: 6 ORE (5 pips), Nodes: [22, 23, 49, 50, 51, 52]
-Tile 18: 2 SHEEP (1 pips), Nodes: [6, 7, 23, 24, 52, 53]"""
+T0: 11-Sh(2p) [0,1,2,3,4,5]
+T1: 10-Wd(3p) [1,2,6,7,8,9]
+T2: 3-Br(2p) [2,3,9,10,11,12]
+T3: 6-Wd(5p) [3,4,12,13,14,15]
+T4: 5-Wh(4p) [4,5,15,16,17,18]
+T5: 4-Wh(3p) [0,5,16,19,20,21]
+T6: 9-Sh(4p) [0,1,6,20,22,23]
+T7: 5-Sh(4p) [7,8,24,25,26,27]
+T8: 8-Br(5p) [8,9,10,27,28,29]
+T9: 4-Wd(3p) [10,11,29,30,31,32]
+T10: 11-Or(2p) [11,12,13,32,33,34]
+T11: DESERT [13,14,34,35,36,37]
+T12: 12-Wd(1p) [14,15,17,37,38,39]
+T13: 9-Or(4p) [17,18,39,40,41,42]
+T14: 10-Br(3p) [16,18,21,40,43,44]
+T15: 8-Wh(5p) [19,21,43,45,46,47]
+T16: 3-Wh(2p) [19,20,22,46,48,49]
+T17: 6-Or(5p) [22,23,49,50,51,52]
+T18: 2-Sh(1p) [6,7,23,24,52,53]"""
 
     assert result == expected
 

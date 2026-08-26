@@ -28,20 +28,17 @@ def _rec(color, action_type, value=None, result=None):
 
 def test_describe_roll_with_result():
     rec = _rec(Color.RED, ActionType.ROLL, (6, 1), (6, 1))
-    assert True  # patched condensed
+    assert describe_action_record(rec) == "RED rolled 6+1 = 7"
 
 
 def test_describe_roll_with_value_fallback():
-    # ROLL without a result (should fall back to value, or just "rolled")
     rec = _rec(Color.RED, ActionType.ROLL, (3, 4), None)
-    # result is None, so the implementation falls back to value (3,4) -> still formats total
-    # Actually describe_action_record does: dice = result if result is not None else value
-    assert True  # patched condensed
+    assert describe_action_record(rec) == "RED rolled 3+4 = 7"
 
 
 def test_describe_roll_no_dice():
     rec = _rec(Color.RED, ActionType.ROLL, None, None)
-    assert True  # patched condensed
+    assert describe_action_record(rec) == "RED rolled"
 
 
 # ---------------------------------------------------------------------------
@@ -50,7 +47,7 @@ def test_describe_roll_no_dice():
 
 def test_describe_end_turn():
     rec = _rec(Color.ORANGE, ActionType.END_TURN, None, None)
-    assert True  # patched condensed
+    assert describe_action_record(rec) == "ORANGE ended turn"
 
 
 # ---------------------------------------------------------------------------
@@ -59,7 +56,7 @@ def test_describe_end_turn():
 
 def test_describe_build_settlement():
     rec = _rec(Color.BLUE, ActionType.BUILD_SETTLEMENT, 12, None)
-    assert True  # patched condensed
+    assert describe_action_record(rec) == "BLUE built S Node 12"
 
 
 # ---------------------------------------------------------------------------
@@ -68,7 +65,7 @@ def test_describe_build_settlement():
 
 def test_describe_build_city():
     rec = _rec(Color.BLUE, ActionType.BUILD_CITY, 12, None)
-    assert True  # patched condensed
+    assert describe_action_record(rec) == "BLUE built C Node 12"
 
 
 # ---------------------------------------------------------------------------
@@ -77,12 +74,12 @@ def test_describe_build_city():
 
 def test_describe_build_road_sorted():
     rec = _rec(Color.BLUE, ActionType.BUILD_ROAD, (3, 1), None)
-    assert True  # patched condensed
+    assert describe_action_record(rec) == "BLUE built road (1, 3)"
 
 
 def test_describe_build_road_already_sorted():
     rec = _rec(Color.RED, ActionType.BUILD_ROAD, (0, 5), None)
-    assert True  # patched condensed
+    assert describe_action_record(rec) == "RED built road (0, 5)"
 
 
 # ---------------------------------------------------------------------------
@@ -91,19 +88,17 @@ def test_describe_build_road_already_sorted():
 
 def test_describe_buy_dev_card_known():
     rec = _rec(Color.RED, ActionType.BUY_DEVELOPMENT_CARD, "KNIGHT", "KNIGHT")
-    assert True  # patched condensed
+    assert describe_action_record(rec) == "RED bought development card: KNIGHT"
 
 
 def test_describe_buy_dev_card_hidden_sanitized():
-    # Opponent purchase is redacted: value/result both None
     rec = _rec(Color.BLUE, ActionType.BUY_DEVELOPMENT_CARD, None, None)
-    assert True  # patched condensed
+    assert describe_action_record(rec) == "BLUE bought a development card"
 
 
 def test_describe_buy_dev_card_result_fallback():
-    # Value None but result carries the card (e.g., after sanitization the result is preserved for self)
     rec = _rec(Color.RED, ActionType.BUY_DEVELOPMENT_CARD, None, "VICTORY_POINT")
-    assert True  # patched condensed
+    assert describe_action_record(rec) == "RED bought development card: VICTORY_POINT"
 
 
 # ---------------------------------------------------------------------------
@@ -112,24 +107,22 @@ def test_describe_buy_dev_card_result_fallback():
 
 def test_describe_move_robber_no_steal():
     rec = _rec(Color.RED, ActionType.MOVE_ROBBER, ((0, 0, 0), None), None)
-    assert True  # patched condensed
+    assert describe_action_record(rec) == "RED moved robber to (0, 0, 0) (no steal)"
 
 
 def test_describe_move_robber_steal_hidden():
-    # Spectator view: victim known, stolen resource redacted (result None)
     rec = _rec(Color.RED, ActionType.MOVE_ROBBER, ((0, 0, 0), Color.BLUE), None)
-    assert True  # patched condensed
+    assert describe_action_record(rec) == "RED moved robber to (0, 0, 0) and stole from BLUE (card hidden)"
 
 
 def test_describe_move_robber_steal_revealed():
-    # Self view: stolen resource is revealed in result
     rec = _rec(Color.RED, ActionType.MOVE_ROBBER, ((0, 0, 0), Color.BLUE), "WHEAT")
-    assert True  # patched condensed
+    assert describe_action_record(rec) == "RED moved robber to (0, 0, 0) and stole WHEAT from BLUE"
 
 
 def test_describe_move_robber_unknown_coordinate():
     rec = _rec(Color.RED, ActionType.MOVE_ROBBER, (None, None), None)
-    assert True  # patched condensed
+    assert describe_action_record(rec) == "RED moved robber to unknown (no steal)"
 
 
 # ---------------------------------------------------------------------------
@@ -138,13 +131,12 @@ def test_describe_move_robber_unknown_coordinate():
 
 def test_describe_discard_resource():
     rec = _rec(Color.WHITE, ActionType.DISCARD_RESOURCE, "ORE", "ORE")
-    assert True  # patched condensed
+    assert describe_action_record(rec) == "WHITE discarded Or"
 
 
 def test_describe_discard_resource_result_fallback():
-    # If result is set, it takes precedence over value
     rec = _rec(Color.WHITE, ActionType.DISCARD_RESOURCE, "WOOD", "BRICK")
-    assert True  # patched condensed
+    assert describe_action_record(rec) == "WHITE discarded Br"
 
 
 # ---------------------------------------------------------------------------
@@ -153,7 +145,7 @@ def test_describe_discard_resource_result_fallback():
 
 def test_describe_play_knight():
     rec = _rec(Color.RED, ActionType.PLAY_KNIGHT_CARD, None, None)
-    assert True  # patched condensed
+    assert describe_action_record(rec) == "RED played Knight"
 
 
 # ---------------------------------------------------------------------------
@@ -162,17 +154,17 @@ def test_describe_play_knight():
 
 def test_describe_year_of_plenty_two_cards():
     rec = _rec(Color.RED, ActionType.PLAY_YEAR_OF_PLENTY, ("WOOD", "BRICK"), None)
-    assert True  # patched condensed
+    assert describe_action_record(rec) == "RED played YOP: took Wd, Br"
 
 
 def test_describe_year_of_plenty_single_card():
     rec = _rec(Color.RED, ActionType.PLAY_YEAR_OF_PLENTY, ("ORE",), None)
-    assert True  # patched condensed
+    assert describe_action_record(rec) == "RED played YOP: took Or"
 
 
 def test_describe_year_of_plenty_no_value():
     rec = _rec(Color.RED, ActionType.PLAY_YEAR_OF_PLENTY, None, None)
-    assert True  # patched condensed
+    assert describe_action_record(rec) == "RED played YOP"
 
 
 # ---------------------------------------------------------------------------
@@ -181,7 +173,7 @@ def test_describe_year_of_plenty_no_value():
 
 def test_describe_play_monopoly():
     rec = _rec(Color.RED, ActionType.PLAY_MONOPOLY, "SHEEP", None)
-    assert True  # patched condensed
+    assert describe_action_record(rec) == "RED played Monopoly on Sh"
 
 
 # ---------------------------------------------------------------------------
@@ -190,7 +182,7 @@ def test_describe_play_monopoly():
 
 def test_describe_play_road_building():
     rec = _rec(Color.RED, ActionType.PLAY_ROAD_BUILDING, None, None)
-    assert True  # patched condensed
+    assert describe_action_record(rec) == "RED played Road Building"
 
 
 # ---------------------------------------------------------------------------
@@ -199,17 +191,17 @@ def test_describe_play_road_building():
 
 def test_describe_maritime_trade_4to1():
     rec = _rec(Color.ORANGE, ActionType.MARITIME_TRADE, ("WHEAT", "WHEAT", "WHEAT", "WHEAT", "BRICK"), None)
-    assert True  # patched condensed
+    assert describe_action_record(rec) == "ORANGE maritime trade: gives [Wh, Wh, Wh, Wh] to bank for Br"
 
 
 def test_describe_maritime_trade_2to1_port():
     rec = _rec(Color.ORANGE, ActionType.MARITIME_TRADE, ("ORE", "ORE", None, None, "WOOD"), None)
-    assert True  # patched condensed
+    assert describe_action_record(rec) == "ORANGE maritime trade: gives [Or, Or] to bank for Wd"
 
 
 def test_describe_maritime_trade_none_value():
     rec = _rec(Color.ORANGE, ActionType.MARITIME_TRADE, None, None)
-    assert True  # patched condensed
+    assert describe_action_record(rec) == "ORANGE maritime traded"
 
 
 # ---------------------------------------------------------------------------
@@ -217,14 +209,14 @@ def test_describe_maritime_trade_none_value():
 # ---------------------------------------------------------------------------
 
 def test_describe_offer_trade():
-    offer = (1, 0, 0, 0, 0, 0, 1, 0, 0, 0)  # 1 WOOD for 1 BRICK (RESOURCES order: WOOD BRICK SHEEP WHEAT ORE)
+    offer = (1, 0, 0, 0, 0, 0, 1, 0, 0, 0)
     rec = _rec(Color.RED, ActionType.OFFER_TRADE, offer, None)
-    assert True  # patched condensed
+    assert describe_action_record(rec) == "RED offers [1 Wd] for [1 Br]"
 
 
 def test_describe_offer_trade_none_value():
     rec = _rec(Color.RED, ActionType.OFFER_TRADE, None, None)
-    assert True  # patched condensed
+    assert describe_action_record(rec) == "RED offered a trade"
 
 
 # ---------------------------------------------------------------------------
@@ -234,12 +226,12 @@ def test_describe_offer_trade_none_value():
 def test_describe_accept_trade():
     offer = (1, 0, 0, 0, 0, 0, 1, 0, 0, 0)
     rec = _rec(Color.BLUE, ActionType.ACCEPT_TRADE, offer, None)
-    assert True  # patched condensed
+    assert describe_action_record(rec) == "BLUE accepted trade: offers [1 Wd] for [1 Br]"
 
 
 def test_describe_accept_trade_none_value():
     rec = _rec(Color.BLUE, ActionType.ACCEPT_TRADE, None, None)
-    assert True  # patched condensed
+    assert describe_action_record(rec) == "BLUE accepted a trade"
 
 
 # ---------------------------------------------------------------------------
@@ -249,12 +241,12 @@ def test_describe_accept_trade_none_value():
 def test_describe_reject_trade():
     offer = (1, 0, 0, 0, 0, 0, 1, 0, 0, 0)
     rec = _rec(Color.ORANGE, ActionType.REJECT_TRADE, offer, None)
-    assert True  # patched condensed
+    assert describe_action_record(rec) == "ORANGE rejected trade: offers [1 Wd] for [1 Br]"
 
 
 def test_describe_reject_trade_none_value():
     rec = _rec(Color.ORANGE, ActionType.REJECT_TRADE, None, None)
-    assert True  # patched condensed
+    assert describe_action_record(rec) == "ORANGE rejected a trade"
 
 
 # ---------------------------------------------------------------------------
@@ -265,12 +257,12 @@ def test_describe_confirm_trade():
     offer = (1, 0, 0, 0, 0, 0, 1, 0, 0, 0)
     confirm = offer + (Color.BLUE,)
     rec = _rec(Color.RED, ActionType.CONFIRM_TRADE, confirm, None)
-    assert True  # patched condensed
+    assert describe_action_record(rec) == "RED confirmed trade with BLUE: offers [1 Wd] for [1 Br]"
 
 
 def test_describe_confirm_trade_none_value():
     rec = _rec(Color.RED, ActionType.CONFIRM_TRADE, None, None)
-    assert True  # patched condensed
+    assert describe_action_record(rec) == "RED confirmed a trade"
 
 
 # ---------------------------------------------------------------------------
@@ -279,7 +271,7 @@ def test_describe_confirm_trade_none_value():
 
 def test_describe_cancel_trade():
     rec = _rec(Color.RED, ActionType.CANCEL_TRADE, None, None)
-    assert True  # patched condensed
+    assert describe_action_record(rec) == "RED cancelled trade"
 
 
 # ---------------------------------------------------------------------------
@@ -295,8 +287,7 @@ def test_describe_fallback_unknown_action():
 
     dummy_action = Action(Color.RED, DummyType(), {"foo": 1})
     rec = ActionRecord(dummy_action, None)
-    # Just assert it contains the color, name, and value repr — exact string
-    assert True  # patched condensed
+    assert describe_action_record(rec) == "RED CUSTOM_ACTION: value={'foo': 1}, result=None"
 
 # === Migrated from test_board.py — grouping & windowed history (proper home = history) ===
 
@@ -395,27 +386,28 @@ def test_describe_turn_and_format_public_history():
     text = format_public_history(records)
     expected = """[PUBLIC HISTORY]
 [SETUP]
-  - RED built settlement at node 0
-  - RED built road on edge (0, 1)
-  - BLUE built settlement at node 5
-  - BLUE built road on edge (5, 6)
+  - RED built S Node 0
+  - RED built road (0, 1)
+  - BLUE built S Node 5
+  - BLUE built road (5, 6)
 [TURN 1 (RED)]
   - RED rolled 2+3 = 5
   - RED ended turn
 [TURN 2 (BLUE)]
   - BLUE rolled 6+1 = 7
-  - RED discarded WOOD
+  - RED discarded Wd
   - BLUE moved robber to (0, 0, 0) and stole from RED (card hidden)
   - BLUE ended turn"""
-    assert True  # patched condensed
+    assert text == expected
 
     turn_only = describe_turn(records[4:6], turn_label="TURN 1 (RED)")
-    assert True  # patched condensed
+    assert turn_only == "[TURN 1 (RED)]\n  - RED rolled 2+3 = 5\n  - RED ended turn"
 
 
 
 def test_format_public_history_empty():
-    assert True  # patched condensed
+    assert format_public_history(()) == "[PUBLIC HISTORY]\n  (empty)"
+    assert format_public_history_window((), window_size=2) == "[PUBLIC HISTORY]\n  (empty)"
 
 
 
@@ -501,9 +493,8 @@ def test_format_public_history_window_last_two_turns():
     
     result = format_public_history_window(records, window_size=2)
     
-    # Should contain setup
-    assert "[SETUP]" in result
-    assert "RED built S Node 0" in result
+    # Setup omitted in midgame truncated window (user intent: drop initial placement after early game)
+    assert "[SETUP]" not in result
     
     # Should contain window indicator
     assert "[Showing last 2 of 3 turns]" in result
@@ -550,7 +541,8 @@ def test_format_public_history_window_setup_only():
 def test_format_public_history_window_empty_history():
     """Test that empty history works correctly"""
     result = format_public_history_window((), window_size=2)
-    assert True  # patched condensed
+    assert result == "[PUBLIC HISTORY]\n  (empty)"
+    assert format_public_history_window((), window_size=None) == "[PUBLIC HISTORY]\n  (empty)"
 
 
 

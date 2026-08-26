@@ -454,6 +454,27 @@ def get_players_summary(
         return "\n".join(lines)
 
     # --- Midgame (default) — keep full detail but compress Pieces to compact form ---
+    # Hide zero Dev/Army when no player holds any (pure noise in early/midgame)
+    has_any_dev = False
+    has_any_army = False
+    for color, player_data in public_state.players.items():
+        is_current = (color == current_player_color)
+        inv = current_player_inventory if is_current else None
+        if is_current and inv is not None:
+            if any(getattr(inv, r, 0) > 0 for r in ("knight", "year_of_plenty", "monopoly", "road_building", "victory_point")):
+                has_any_dev = True
+        if (
+            player_data.hand_dev_count > 0
+            or player_data.played_knight > 0
+            or player_data.played_year_of_plenty > 0
+            or player_data.played_monopoly > 0
+            or player_data.played_road_building > 0
+            or player_data.played_victory_point > 0
+        ):
+            has_any_dev = True
+        if player_data.played_knight != 0 or bool(player_data.has_army):
+            has_any_army = True
+
     lines = ["[PLAYERS]"]
     for color, player_data in public_state.players.items():
         color_name = _name_of(color)
@@ -472,17 +493,17 @@ def get_players_summary(
         pips = _format_pips_for_overview(board_player)
         pieces = _format_pieces_compact(player_data)
 
-        lines.append(
-            f"- {color_name}{tag}: "
-            f"Resources: {resources} | "
-            f"Dev: {dev} | "
-            f"VP: {vp} | "
-            f"Roads: {road} | "
-            f"Army: {army} | "
-            f"Ports: {ports} | "
-            f"Pips: {pips} | "
-            f"Pieces: {pieces}"
-        )
+        # Assemble only non-zero Dev/Army when relevant
+        parts = [f"Resources: {resources}"]
+        if has_any_dev:
+            parts.append(f"Dev: {dev}")
+        parts.append(f"VP: {vp}")
+        parts.append(f"Roads: {road}")
+        if has_any_army:
+            parts.append(f"Army: {army}")
+        parts.extend([f"Ports: {ports}", f"Pips: {pips}", f"Pieces: {pieces}"])
+
+        lines.append(f"- {color_name}{tag}: " + " | ".join(parts))
     return "\n".join(lines)
 
 

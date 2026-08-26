@@ -305,11 +305,10 @@ def _robber_tile_detail(public_state: Optional[PublicState], coordinate) -> str:
         color_name = _name_of(owner)
         hand_cards = public_state.players.get(owner)
         card_count = getattr(hand_cards, "hand_resource_count", "?") if hand_cards is not None else "?"
-        total_blocked = sum(bp for _, _, bp in occupants[owner])
         nodes_desc = ", ".join(
             f"{btype.lower()}@N{nid}({bp}p)" for nid, btype, bp in sorted(occupants[owner])
         )
-        parts.append(f"{color_name} {nodes_desc} {total_blocked}p blk,{card_count}c")
+        parts.append(f"{color_name} {nodes_desc} {card_count}c")
     return f"{tile_str} | {'; '.join(parts)}"
 
 
@@ -1022,6 +1021,115 @@ def format_moves(moves: Sequence[Move], observation=None) -> str:
                 lines.append(f"  Action {idx}: {road_detail}")
 
         return "\n".join(lines)
+
+    # --- Robber / Knight-by-tile grouping (shared with initial placement) ---
+    is_robber = current_prompt == ActionPrompt.MOVE_ROBBER
+    # Knight-bundled moves appear under PLAY_TURN as Play Knight -> robber bundles
+    has_knight_bundles = False
+    if moves:
+        try:
+            has_knight_bundles = any(
+                getattr(m.actions[0], "action_type", None) == ActionType.PLAY_KNIGHT_CARD for m in moves
+            )
+        except Exception:
+            has_knight_bundles = False
+
+    if is_robber or has_knight_bundles:
+        # Group by robber tile so heavy Tile detail appears once per tile
+        from collections import OrderedDict
+
+        public_state = getattr(observation, "public_state", None) if observation is not None else None
+
+        def _extract_coord_victim(move: Move):
+            for act in move.actions:
+                try:
+                    if getattr(act, "action_type", None) == ActionType.MOVE_ROBBER:
+                        coord, victim = act.value
+                        return coord, victim
+                except Exception:
+                    continue
+            # Fallback: try label parsing for victim
+            return None, None
+
+        # Separate knight bundles vs other moves for mixed PLAY_TURN cases
+        knight_indices = set()
+        other_entries: list[tuple[int, Move]] = []
+        knight_entries: list[tuple[int, Move]] = []
+        if has_knight_bundles and not is_robber:
+            for idx, m in enumerate(moves, start=1):
+                if getattr(m.actions[0], "action_type", None) == ActionType.PLAY_KNIGHT_CARD:
+                    knight_entries.append((idx, m))
+                    knight_indices.add(idx)
+                else:
+                    other_entries.append((idx, m))
+            # Only group if enough knight options to benefit (≥4)
+            if len(knight_entries) < 4:
+                has_knight_bundles = False
+
+        if is_robber:
+            lines = ["[PLAYABLE MOVES]"]
+            if current_prompt is not None:
+                phase = getattr(current_prompt, "name", str(current_prompt))
+                lines.append(f"[PHASE: {phase}]")
+            if not moves:
+                lines.append("  (no moves available)")
+                return "\n".join(lines)
+            groups: "OrderedDict[Any, dict]" = OrderedDict()
+            for idx, move in enumerate(moves, start=1):
+                coord, victim = _extract_coord_victim(move)
+                tile_id = _tile_id_for_coordinate(public_state, coord) if public_state is not None and coord is not None else None
+                key = tile_id if tile_id is not None else coord
+                if key not in groups:
+                    groups[key] = {"coord": coord, "entries": []}
+                groups[key]["entries"].append((idx, move, victim))
+            # Deterministic order by tile id
+            for key in sorted(groups.keys(), key=lambda k: (k is None, str(k) if not isinstance(k, int) else k)):
+                coord = groups[key]["coord"]
+                if public_state is not None and coord is not None:
+                    header = _robber_tile_detail(public_state, coord)
+                else:
+                    header = f"Tile {key}" if isinstance(key, int) else _coordinate_tile_label(public_state, coord)
+                lines.append(f"{header}:")
+                for idx, _mv, victim in groups[key]["entries"]:
+                    if victim is None:
+                        lines.append(f"  Action {idx}: no steal")
+                    else:
+                        lines.append(f"  Action {idx}: steal from {_name_of(victim)}")
+            return "\n".join(lines)
+
+        if has_knight_bundles:
+            # Mixed PLAY_TURN with Knight bundles + other actions (e.g. Roll)
+            lines = ["[PLAYABLE MOVES]"]
+            if current_prompt is not None:
+                phase = getattr(current_prompt, "name", str(current_prompt))
+                lines.append(f"[PHASE: {phase}]")
+            if not moves:
+                lines.append("  (no moves available)")
+                return "\n".join(lines)
+            groups: "OrderedDict[Any, dict]" = OrderedDict()
+            for idx, move in knight_entries:
+                coord, victim = _extract_coord_victim(move)
+                tile_id = _tile_id_for_coordinate(public_state, coord) if public_state is not None and coord is not None else None
+                key = tile_id if tile_id is not None else coord
+                if key not in groups:
+                    groups[key] = {"coord": coord, "entries": []}
+                groups[key]["entries"].append((idx, move, victim))
+            for key in sorted(groups.keys(), key=lambda k: (k is None, str(k) if not isinstance(k, int) else k)):
+                coord = groups[key]["coord"]
+                if public_state is not None and coord is not None:
+                    header = _robber_tile_detail(public_state, coord)
+                else:
+                    header = f"Tile {key}" if isinstance(key, int) else _coordinate_tile_label(public_state, coord)
+                lines.append(f"{header}:")
+                for idx, _mv, victim in groups[key]["entries"]:
+                    if victim is None:
+                        lines.append(f"  Action {idx}: Play Knight -> no steal")
+                    else:
+                        lines.append(f"  Action {idx}: Play Knight -> steal from {_name_of(victim)}")
+            # Append non-knight moves flat after grouped section
+            for idx, mv in other_entries:
+                lines.append(f"{idx}. {mv.label}")
+            return "\n".join(lines)
 
     # Non-initial (flat) rendering
     lines = ["[PLAYABLE MOVES]"]

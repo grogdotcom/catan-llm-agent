@@ -186,8 +186,9 @@ def test_get_game_state_summary_contains_board_tiles_and_occupancy_and_players()
     game = create_empty_game(seed=42)
     ps = build_public_state(game)
     out = get_game_state_summary(ps, Color.BLUE)
-    # board map has 19 tiles
-    assert out.count("Tile ") >= 19
+    # board map has 19 tiles — compact T{id}: format
+    tile_lines = [l for l in out.splitlines() if l.startswith("T") and ":" in l and "[" in l]
+    assert len(tile_lines) >= 19
     # occupancy header
     assert "Total:" in out
     # players header — current player marked (YOU) only when color supplied
@@ -215,10 +216,11 @@ def test_get_game_state_summary_without_inventory_all_hidden():
     ps = build_public_state(game)
     out = get_game_state_summary(ps, Color.RED, None)
     # Even RED is hidden when no inventory — look inside [PLAYERS] section, not occupancy
+    # Dev/Army omitted when all zero (compressed)
     players_section = out.split("[PLAYERS]", 1)[1]
     red_line = [ln for ln in players_section.splitlines() if ln.startswith("- RED")][0]
     assert "hidden" in red_line
-    assert "d hidden" in red_line
+    assert "Resources:" in red_line
 
 
 def test_get_game_state_summary_exact_deterministic_empty():
@@ -242,8 +244,8 @@ def test_get_game_state_summary_with_buildings_shows_ports_and_pips():
     assert "Ports:" in out
     # players pips section
     assert "Pips:" in out
-    # ORANGE has SHEEP port in that deterministic setup
-    assert "SHEEP" in out
+    # ORANGE has SHEEP port in that deterministic setup — now abbreviated Sh
+    assert "SHEEP" in out or "Sh" in out
 
 
 # ---------------------------------------------------------------------------
@@ -582,13 +584,14 @@ def test_get_complete_prompt_with_observation_bundles_moves():
     obs = _observation_shim(ps, state.current_prompt, Color.RED, playable)
 
     out = get_complete_prompt(ps, Color.RED, playable, observation=obs)
-    # knight moves are bundled as "Play Knight -> move robber to ..."
-    assert "Play Knight -> move robber to" in out
+    # knight moves are now grouped by tile (header) + sub-action steal
+    assert "Play Knight -> steal from" in out or "Play Knight -> no steal" in out
+    assert "Tile" in out
     # no AUTO_ROAD sentinel leaked
     assert "AUTO_ROAD" not in out
     # moves count matches engine robber possibilities for knights
     engine_targets = len(list(robber_possibilities(state, Color.RED)))
-    assert out.count("Play Knight -> move robber to") == engine_targets
+    assert out.count("Play Knight ->") == engine_targets
 
 
 def test_get_complete_prompt_inventory_hidden_vs_exact():
@@ -603,11 +606,13 @@ def test_get_complete_prompt_inventory_hidden_vs_exact():
     red_line_with = [l for l in players_with.splitlines() if l.startswith("- RED")][0]
     assert "Wd:2" in red_line_with and "Br:1" in red_line_with
     assert "Kn:1" in red_line_with
-    # without, RED hidden
+    # without, RED hidden — Dev omitted when all zero
     players_without = out_without.split("[PLAYERS]", 1)[1]
     red_line_without = [l for l in players_without.splitlines() if l.startswith("- RED")][0]
     assert "hidden" in red_line_without
-    assert "d hidden" in red_line_without or "d hidden" in red_line_without
+    assert "Resources:" in red_line_without
+    # Dev fragment only when some player holds dev; when all zero it is omitted
+    assert "d hidden" in red_line_without or "Dev:" not in red_line_without
 
 
 def test_get_complete_prompt_robber_blocking_reflects_occupancy():
