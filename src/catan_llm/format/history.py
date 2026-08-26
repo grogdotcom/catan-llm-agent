@@ -279,20 +279,31 @@ def describe_action_record(record: ActionRecord, public_state=None) -> str:
         return f"{color} played YOP: took {cards}"
 
     if action_type == ActionType.PLAY_MONOPOLY:
-        abbr = _abbr_resource(_name_of(value))
-        base = f"{color} played Monopoly on {abbr}"
+        # Condensed: BLUE played MONOPOLY on OR | RED - 2 OR, WHITE - 1 OR (total 3)
+        raw_res = _name_of(value) if value is not None else ""
+        abbr = _abbr_resource(raw_res).upper() if raw_res else ""
+        if not abbr and value is not None:
+            abbr = str(value).upper()
+        base = f"{color} played MONOPOLY on {abbr}" if abbr else f"{color} played MONOPOLY"
         if result is not None:
             try:
                 # Patched result is (resource, stolen_tuple, total)
                 if isinstance(result, tuple) and len(result) == 3:
-                    _, stolen_tuple, total = result
+                    res_resource, stolen_tuple, total = result
+                    res_abbr = (
+                        _abbr_resource(_name_of(res_resource)).upper()
+                        if res_resource
+                        else abbr
+                    )
+                    if not res_abbr:
+                        res_abbr = abbr
                     if isinstance(stolen_tuple, (list, tuple)):
                         parts = []
                         for c, cnt in stolen_tuple:
                             if cnt and cnt > 0:
-                                parts.append(f"{cnt} from {_name_of(c)}")
+                                parts.append(f"{_name_of(c)} - {cnt} {res_abbr}")
                         if parts:
-                            base += f" | stole {', '.join(parts)} (total {total})"
+                            base += f" | {', '.join(parts)} (total {total})"
                         elif total == 0:
                             base += " | stole nothing (total 0)"
                         else:
@@ -301,13 +312,17 @@ def describe_action_record(record: ActionRecord, public_state=None) -> str:
                 if isinstance(result, dict) and "stolen" in result:
                     stolen = result["stolen"]
                     total = result.get("total", sum(v for v in stolen.values() if isinstance(v, int)))
+                    # try to get resource abbr from dict
+                    res_abbr = abbr
+                    if "resource" in result and result["resource"]:
+                        res_abbr = _abbr_resource(_name_of(result["resource"])).upper()
                     parts = [
-                        f"{cnt} from {_name_of(c)}"
+                        f"{_name_of(c)} - {cnt} {res_abbr}"
                         for c, cnt in sorted(stolen.items(), key=lambda kv: _name_of(kv[0]))
                         if cnt and cnt > 0
                     ]
                     if parts:
-                        base += f" | stole {', '.join(parts)} (total {total})"
+                        base += f" | {', '.join(parts)} (total {total})"
                     else:
                         base += f" | stole nothing (total {total})"
                     return base

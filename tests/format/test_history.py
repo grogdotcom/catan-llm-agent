@@ -340,18 +340,18 @@ def test_describe_year_of_plenty_no_value():
 
 def test_describe_play_monopoly():
     rec = _rec(Color.RED, ActionType.PLAY_MONOPOLY, "SHEEP", None)
-    assert describe_action_record(rec) == "RED played Monopoly on Sh"
+    assert describe_action_record(rec) == "RED played MONOPOLY on SH"
 
 
 def test_describe_play_monopoly_with_stolen():
-    # Patched engine stores (resource, stolen_tuple, total); history shows per-player losses
+    # Patched engine stores (resource, stolen_tuple, total); history shows per-player losses condensed
     rec = _rec(Color.BLUE, ActionType.PLAY_MONOPOLY, "ORE", ("ORE", ((Color.RED, 2), (Color.WHITE, 1)), 3))
-    assert describe_action_record(rec) == "BLUE played Monopoly on Or | stole 2 from RED, 1 from WHITE (total 3)"
+    assert describe_action_record(rec) == "BLUE played MONOPOLY on OR | RED - 2 OR, WHITE - 1 OR (total 3)"
 
 
 def test_describe_play_monopoly_stole_nothing():
     rec = _rec(Color.BLUE, ActionType.PLAY_MONOPOLY, "SHEEP", ("SHEEP", (), 0))
-    assert describe_action_record(rec) == "BLUE played Monopoly on Sh | stole nothing (total 0)"
+    assert describe_action_record(rec) == "BLUE played MONOPOLY on SH | stole nothing (total 0)"
 
 
 # ---------------------------------------------------------------------------
@@ -860,7 +860,7 @@ def test_format_public_history_window_last_twelve_turns():
   - RED ended turn
 [TURN 10 (BLUE)]
   - BLUE rolled 5+3 = 8 | ORANGE + [1 Sh], WHITE + [1 Wd]
-  - BLUE played Monopoly on Or | stole 2 from RED, 1 from WHITE (total 3)
+  - BLUE played MONOPOLY on OR | RED - 2 OR, WHITE - 1 OR (total 3)
   - BLUE ended turn
 [TURN 11 (ORANGE)]
   - ORANGE rolled 6+6 = 12 | ORANGE + [2 Wd]
