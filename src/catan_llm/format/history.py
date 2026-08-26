@@ -76,28 +76,29 @@ def _describe_roll_resources(public_state, dice_total: int) -> str:
                 for _ in range(count):
                     gains[owner_name].append(resource_name)
 
-    # Format gains part — abbreviated resources
+    # Format gains part — abbreviated resources with bracketed counts
+    # Example: WHITE + [1 Br, 1 Wh], RED + [2 Br]
     parts = []
     for owner in sorted(gains.keys()):
         cnt = Counter(gains[owner])
         ordered = [r for r in RESOURCES if r in cnt]
         inner = ", ".join(f"{cnt[r]} {_abbr_resource(r)}" for r in ordered)
-        parts.append(f"{owner} +{inner}")
+        parts.append(f"{owner} + [{inner}]")
 
     blocked_parts = []
     for owner in sorted(blocked_gains.keys()):
         cnt = Counter(blocked_gains[owner])
         ordered = [r for r in RESOURCES if r in cnt]
         inner = ", ".join(f"{cnt[r]} {_abbr_resource(r)}" for r in ordered)
-        blocked_parts.append(f"{owner} {inner}")
+        blocked_parts.append(f"{owner} [{inner}]")
 
     if gains and blocked_parts:
-        return " — " + "; ".join(parts) + f" - blk {', '.join(blocked_parts)}"
+        return " | " + ", ".join(parts) + f" | blk " + ", ".join(blocked_parts)
     if gains:
-        return " — " + "; ".join(parts)
+        return " | " + ", ".join(parts)
     if blocked_parts:
-        return f" — blk {', '.join(blocked_parts)}"
-    return " — no resources"
+        return f" | blk " + ", ".join(blocked_parts)
+    return " | no resources"
 
 
 def describe_action_record(record: ActionRecord, public_state=None) -> str:
