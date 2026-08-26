@@ -175,19 +175,42 @@ def describe_action_record(record: ActionRecord, public_state=None) -> str:
         victim = None
         if value is not None:
             coordinate, victim = value[0], value[1]
-        # Enriched tile detail mirrors playable-move robber label
+        # Tile display mirrors board layout: Tile N: ROLL-Abbr(Pips) / DESERT
         tile_detail = None
         if public_state is not None and coordinate is not None:
             try:
-                from catan_llm.format.moves import _robber_tile_detail
+                tile_id = None
+                for tid, coord in public_state.board.map.tile_coordinates.items():
+                    if coord == coordinate:
+                        tile_id = tid
+                        break
+                if tile_id is not None:
+                    resource, roll = public_state.board.map.tiles.get(tile_id, (None, None))
+                    if resource is None:
+                        tile_detail = f"Tile {tile_id}: DESERT"
+                    else:
+                        res_name = resource.name if hasattr(resource, "name") else str(resource)
+                        abbr = _abbr_resource(res_name)
+                        pips = get_pip_count(roll)
+                        tile_detail = f"Tile {tile_id}: {roll}-{abbr}({pips}p)"
+                if tile_detail is None:
+                    from catan_llm.format.utils import _format_coordinate as _fmt_coord
 
-                tile_detail = _robber_tile_detail(public_state, coordinate)
+                    tile_detail = _fmt_coord(coordinate)
             except Exception:
                 tile_detail = None
-        coord_str = tile_detail if tile_detail is not None else (coordinate if coordinate is not None else "unknown")
-        # Fall back to raw coordinate formatting if tile_detail unavailable
-        if tile_detail is None:
-            coord_str = coordinate if coordinate is not None else "unknown"
+        if tile_detail is not None:
+            coord_str = tile_detail
+        else:
+            if coordinate is not None:
+                from catan_llm.format.utils import _format_coordinate as _fmt_coord
+
+                try:
+                    coord_str = _fmt_coord(coordinate)
+                except Exception:
+                    coord_str = str(coordinate)
+            else:
+                coord_str = "unknown"
         if victim is None:
             return f"{color} moved robber to {coord_str} (no steal)"
         victim_name = _name_of(victim)
@@ -242,10 +265,15 @@ def describe_action_record(record: ActionRecord, public_state=None) -> str:
 
     if action_type == ActionType.CONFIRM_TRADE:
         if value is None:
-            return f"{color} confirmed a trade"
-        trade_part = _format_trade_offer_value(value[:10])
+            return f"{color} traded"
         acceptor = _name_of(value[10]) if len(value) > 10 else "unknown"
-        return f"{color} confirmed trade with {acceptor}: {trade_part}"
+        try:
+            offered = _format_resource_counts(value[:5])
+            asking = _format_resource_counts(value[5:10])
+            return f"{color} gave {acceptor} [{offered}] for [{asking}]"
+        except Exception:
+            trade_part = _format_trade_offer_value(value[:10])
+            return f"{color} gave {acceptor} {trade_part}"
 
     if action_type == ActionType.CANCEL_TRADE:
         return f"{color} cancelled trade"
@@ -352,6 +380,18 @@ def describe_turn(
     i = 0
     while i < len(records):
         record = records[i]
+        # Filter trade noise — only the offer and final execution (traded)
+        # are kept. Rejections, intermediate accepts, and cancels are implicit
+        # (no traded line = no deal) and just add spam; this gives
+        # "Blue offers [1 Wd] for [1 Br], Red offers [2 Or] for [1 Wd], Red traded ... with Blue"
+        # without per-player reject/cancel spam.
+        if record.action.action_type in (
+            ActionType.REJECT_TRADE,
+            ActionType.ACCEPT_TRADE,
+            ActionType.CANCEL_TRADE,
+        ):
+            i += 1
+            continue
         # Aggregate contiguous DISCARD_RESOURCE records (e.g. 7-roll) per player
         # to match bundled playable-move format: "ORANGE discarded WOOD, WHEAT, SHEEP, WHEAT (WOOD: 1, WHEAT: 2, SHEEP: 1)"
         if record.action.action_type == ActionType.DISCARD_RESOURCE:

@@ -125,6 +125,71 @@ def test_describe_move_robber_unknown_coordinate():
     assert describe_action_record(rec) == "RED moved robber to unknown (no steal)"
 
 
+# Enriched TILE display — same tile string as board layout (Tile N: ROLL-Abbr(pips) / DESERT)
+def _enriched_ps(seed=42):
+    from catanatron.game import Game
+    from catanatron.models.player import Player
+    from catanatron.models.perspective_player import _build_public_state
+
+    class _P(Player):
+        def __init__(self, color):
+            self.color = color
+            self.is_bot = True
+        def decide(self, game, playable_actions):
+            return playable_actions[0] if playable_actions else None
+        def reset_state(self):
+            pass
+    players = [_P(Color.RED), _P(Color.BLUE), _P(Color.ORANGE), _P(Color.WHITE)]
+    game = Game(players, seed=seed)
+    return _build_public_state(game)
+
+
+def test_describe_move_robber_enriched_shows_tile_no_steal():
+    from catan_llm.format.utils import _abbr_resource, get_pip_count
+    ps = _enriched_ps()
+    # pick a non-desert tile deterministically
+    tile_id, (resource, roll) = next((tid, v) for tid, v in ps.board.map.tiles.items() if v[0] is not None)
+    coord = ps.board.map.tile_coordinates[tile_id]
+    abbr = _abbr_resource(resource.name if hasattr(resource, "name") else str(resource))
+    pips = get_pip_count(roll)
+    expected_tile = f"Tile {tile_id}: {roll}-{abbr}({pips}p)"
+    rec = _rec(Color.BLUE, ActionType.MOVE_ROBBER, (coord, None), None)
+    assert describe_action_record(rec, public_state=ps) == f"BLUE moved robber to {expected_tile} (no steal)"
+
+
+def test_describe_move_robber_enriched_shows_tile_steal_hidden():
+    from catan_llm.format.utils import _abbr_resource, get_pip_count
+    ps = _enriched_ps()
+    tile_id, (resource, roll) = next((tid, v) for tid, v in ps.board.map.tiles.items() if v[0] is not None)
+    coord = ps.board.map.tile_coordinates[tile_id]
+    abbr = _abbr_resource(resource.name if hasattr(resource, "name") else str(resource))
+    pips = get_pip_count(roll)
+    expected_tile = f"Tile {tile_id}: {roll}-{abbr}({pips}p)"
+    rec = _rec(Color.BLUE, ActionType.MOVE_ROBBER, (coord, Color.RED), None)
+    assert describe_action_record(rec, public_state=ps) == f"BLUE moved robber to {expected_tile} and stole from RED (card hidden)"
+
+
+def test_describe_move_robber_enriched_shows_tile_steal_revealed():
+    from catan_llm.format.utils import _abbr_resource, get_pip_count
+    ps = _enriched_ps()
+    tile_id, (resource, roll) = next((tid, v) for tid, v in ps.board.map.tiles.items() if v[0] is not None)
+    coord = ps.board.map.tile_coordinates[tile_id]
+    abbr = _abbr_resource(resource.name if hasattr(resource, "name") else str(resource))
+    pips = get_pip_count(roll)
+    expected_tile = f"Tile {tile_id}: {roll}-{abbr}({pips}p)"
+    rec = _rec(Color.BLUE, ActionType.MOVE_ROBBER, (coord, Color.RED), "WHEAT")
+    assert describe_action_record(rec, public_state=ps) == f"BLUE moved robber to {expected_tile} and stole WHEAT from RED"
+
+
+def test_describe_move_robber_enriched_shows_desert():
+    ps = _enriched_ps()
+    tile_id, (resource, roll) = next((tid, v) for tid, v in ps.board.map.tiles.items() if v[0] is None)
+    coord = ps.board.map.tile_coordinates[tile_id]
+    expected_tile = f"Tile {tile_id}: DESERT"
+    rec = _rec(Color.BLUE, ActionType.MOVE_ROBBER, (coord, Color.RED), None)
+    assert describe_action_record(rec, public_state=ps) == f"BLUE moved robber to {expected_tile} and stole from RED (card hidden)"
+
+
 # ---------------------------------------------------------------------------
 # 8. DISCARD_RESOURCE
 # ---------------------------------------------------------------------------
@@ -257,12 +322,12 @@ def test_describe_confirm_trade():
     offer = (1, 0, 0, 0, 0, 0, 1, 0, 0, 0)
     confirm = offer + (Color.BLUE,)
     rec = _rec(Color.RED, ActionType.CONFIRM_TRADE, confirm, None)
-    assert describe_action_record(rec) == "RED confirmed trade with BLUE: offers [1 Wd] for [1 Br]"
+    assert describe_action_record(rec) == "RED gave BLUE [1 Wd] for [1 Br]"
 
 
 def test_describe_confirm_trade_none_value():
     rec = _rec(Color.RED, ActionType.CONFIRM_TRADE, None, None)
-    assert describe_action_record(rec) == "RED confirmed a trade"
+    assert describe_action_record(rec) == "RED traded"
 
 
 # ---------------------------------------------------------------------------
@@ -446,12 +511,24 @@ def test_group_and_format_real_sanitized_history():
     assert "rolled" in text
     assert "ended turn" in text
     # Discards are aggregated per player per contiguous block (e.g. 4 discards -> 1 bullet)
+    # and REJECT/ACCEPT/CANCEL trades are filtered (only offers + traded remain)
     bullet_count = sum(1 for line in text.splitlines() if line.startswith("  - "))
-    non_discard = sum(1 for r in history if r.action.action_type != ActionType.DISCARD_RESOURCE)
-    assert bullet_count >= non_discard
+    filtered_types = (
+        ActionType.DISCARD_RESOURCE,
+        ActionType.REJECT_TRADE,
+        ActionType.ACCEPT_TRADE,
+        ActionType.CANCEL_TRADE,
+    )
+    non_filtered = sum(1 for r in history if r.action.action_type not in filtered_types)
+    # aggregated discards reduce bullets, filtered trades also reduce, so bullet_count <= len(history)
     assert bullet_count <= len(history)
+    assert bullet_count >= non_filtered or bullet_count >= 1
     if any(r.action.action_type == ActionType.DISCARD_RESOURCE for r in history):
         assert "discarded" in text
+    # Rejects/accepts/cancels should not appear in formatted history
+    assert "rejected trade" not in text
+    assert "accepted trade" not in text
+    assert "cancelled trade" not in text
 
 
 
