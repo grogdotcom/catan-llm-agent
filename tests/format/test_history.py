@@ -15,11 +15,113 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../
 
 from catanatron.models.enums import Action, ActionRecord, ActionType
 from catanatron.models.player import Color
-from catan_llm.format.history import describe_action_record
+from catan_llm.format.history import describe_action_record, format_public_history_window
+from catanatron.models.enums import WOOD, BRICK, SHEEP, WHEAT, ORE, SETTLEMENT, CITY
+from catanatron.models.public_state import PublicBoard, PublicMap, PublicPlayer, PublicState
 
 
 def _rec(color, action_type, value=None, result=None):
     return ActionRecord(Action(color, action_type, value), result)
+
+
+def _mock_roll_state() -> PublicState:
+    """PublicState for roll-resource test: every non-7 roll distributes
+    resources to demonstrate pipe+bracket format.
+
+    Tiles:
+      0: BRICK 5  -> RED, ORANGE
+      1: WOOD 4   -> BLUE
+      2: SHEEP 8  -> ORANGE
+      3: WOOD 8   -> WHITE
+      4: BRICK 6  -> WHITE+RED (WHITE touches 4+5, RED city on 4)
+      5: WHEAT 6  -> WHITE
+      6: ORE 9    -> RED
+      7: WOOD 12  -> ORANGE city
+      8: BRICK 10 -> ORANGE
+      9: DESERT 7 -> robber (no production)
+    This yields:
+      5 -> RED+ORANGE [1 Br]
+      4 -> BLUE [1 Wd]
+      8 -> ORANGE [1 Sh], WHITE [1 Wd]
+      6 -> RED [2 Br], WHITE [1 Br, 1 Wh]
+      9 -> RED [1 Or]
+      12 -> ORANGE [2 Wd]
+      10 -> ORANGE [1 Br]
+    """
+    tiles = {
+        0: (BRICK, 5),
+        1: (WOOD, 4),
+        2: (SHEEP, 8),
+        3: (WOOD, 8),
+        4: (BRICK, 6),
+        5: (WHEAT, 6),
+        6: (ORE, 9),
+        7: (WOOD, 12),
+        8: (BRICK, 10),
+        9: (None, 7),
+    }
+    tile_coordinates = {i: (i, 0, -i) for i in tiles}
+    adjacent_tiles = {
+        10: (0,),
+        11: (0,),
+        12: (1,),
+        13: (2,),
+        14: (3,),
+        15: (4, 5),
+        16: (4,),
+        17: (6,),
+        18: (7,),
+        19: (8,),
+    }
+    land_nodes = frozenset(adjacent_tiles.keys())
+    public_map = PublicMap(
+        tiles=tiles,
+        tile_coordinates=tile_coordinates,
+        ports={},
+        adjacent_tiles=adjacent_tiles,
+        land_nodes=land_nodes,
+    )
+    buildings = {
+        10: (Color.RED, SETTLEMENT),
+        11: (Color.ORANGE, SETTLEMENT),
+        12: (Color.BLUE, SETTLEMENT),
+        13: (Color.ORANGE, SETTLEMENT),
+        14: (Color.WHITE, SETTLEMENT),
+        15: (Color.WHITE, SETTLEMENT),
+        16: (Color.RED, CITY),
+        17: (Color.RED, SETTLEMENT),
+        18: (Color.ORANGE, CITY),
+        19: (Color.ORANGE, SETTLEMENT),
+    }
+    board = PublicBoard(
+        buildings=buildings,
+        roads={},
+        robber_tile_id=9,
+        longest_road_color=None,
+        longest_road_length=0,
+        map=public_map,
+    )
+    players = {
+        c: PublicPlayer(
+            public_vps=0,
+            has_army=False,
+            has_road=False,
+            longest_road_length=0,
+            roads_left=15,
+            settlements_left=4,
+            cities_left=4,
+            has_rolled=False,
+            hand_resource_count=0,
+            hand_dev_count=0,
+            played_knight=0,
+            played_monopoly=0,
+            played_road_building=0,
+            played_year_of_plenty=0,
+            played_victory_point=0,
+        )
+        for c in Color
+    }
+    return PublicState(board=board, players=players)
 
 
 # ---------------------------------------------------------------------------
@@ -713,17 +815,18 @@ def test_format_public_history_window_last_twelve_turns():
             records.append(_rec(color, at, val, res))
     records = tuple(records)
 
-    result = format_public_history_window(records, window_size=12)
+    ps = _mock_roll_state()
+    result = format_public_history_window(records, window_size=12, public_state=ps)
 
     expected = """[PUBLIC HISTORY]
 [Showing last 12 of 15 turns]
 [TURN 4 (WHITE)]
-  - WHITE rolled 3+3 = 6
+  - WHITE rolled 3+3 = 6 | RED + [2 Br], WHITE + [1 Br, 1 Wh]
   - WHITE maritime trade: gives [4 Wd] to bank for Br
   - WHITE ended turn
 [TURN 5 (RED)]
-  - RED rolled 5+4 = 9
-  - RED built C Node 0
+  - RED rolled 5+4 = 9 | RED + [1 Or]
+  - RED built C Node 0 [no tiles | 0p]
   - RED ended turn
 [TURN 6 (BLUE)]
   - BLUE rolled 2+5 = 7
@@ -732,7 +835,7 @@ def test_format_public_history_window_last_twelve_turns():
   - BLUE ended turn
 [TURN 7 (ORANGE)]
   - ORANGE rolled 3+4 = 7
-  - ORANGE moved robber to (0, 0, 0) and stole WOOD from RED
+  - ORANGE moved robber to Tile 0: 5-Br(4p) and stole WOOD from RED
   - ORANGE ended turn
 [TURN 8 (WHITE)]
   - WHITE rolled 4+3 = 7
@@ -741,34 +844,34 @@ def test_format_public_history_window_last_twelve_turns():
   - WHITE built road (20, 21)
   - WHITE ended turn
 [TURN 9 (RED)]
-  - RED rolled 6+2 = 8
+  - RED rolled 6+2 = 8 | ORANGE + [1 Sh], WHITE + [1 Wd]
   - RED played YOP: took Wd, Br
   - RED ended turn
 [TURN 10 (BLUE)]
-  - BLUE rolled 5+3 = 8
+  - BLUE rolled 5+3 = 8 | ORANGE + [1 Sh], WHITE + [1 Wd]
   - BLUE played Monopoly on Or
   - BLUE ended turn
 [TURN 11 (ORANGE)]
-  - ORANGE rolled 6+6 = 12
+  - ORANGE rolled 6+6 = 12 | ORANGE + [2 Wd]
   - ORANGE played Knight
   - ORANGE moved robber to (1, -1, 0) and stole from BLUE (card hidden)
   - ORANGE ended turn
 [TURN 12 (WHITE)]
-  - WHITE rolled 3+5 = 8
-  - WHITE built S Node 25
+  - WHITE rolled 3+5 = 8 | ORANGE + [1 Sh], WHITE + [1 Wd]
+  - WHITE built S Node 25 [no tiles | 0p]
   - WHITE built road (25, 26)
   - WHITE ended turn
 [TURN 13 (RED)]
-  - RED rolled 4+2 = 6
+  - RED rolled 4+2 = 6 | RED + [2 Br], WHITE + [1 Br, 1 Wh]
   - RED maritime trade: gives [2 Or] to bank for Wd
   - RED ended turn
 [TURN 14 (BLUE)]
-  - BLUE rolled 2+4 = 6
+  - BLUE rolled 2+4 = 6 | RED + [2 Br], WHITE + [1 Br, 1 Wh]
   - BLUE offers [1 Sh] for [1 Wh]
   - BLUE ended turn
 [TURN 15 (ORANGE)]
-  - ORANGE rolled 5+5 = 10
-  - ORANGE built C Node 10
+  - ORANGE rolled 5+5 = 10 | ORANGE + [1 Br]
+  - ORANGE built C Node 10 [5-Br | 4p]
   - ORANGE built road (10, 15)
   - ORANGE ended turn"""
     assert result == expected
