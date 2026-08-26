@@ -343,6 +343,17 @@ def test_describe_play_monopoly():
     assert describe_action_record(rec) == "RED played Monopoly on Sh"
 
 
+def test_describe_play_monopoly_with_stolen():
+    # Patched engine stores (resource, stolen_tuple, total); history shows per-player losses
+    rec = _rec(Color.BLUE, ActionType.PLAY_MONOPOLY, "ORE", ("ORE", ((Color.RED, 2), (Color.WHITE, 1)), 3))
+    assert describe_action_record(rec) == "BLUE played Monopoly on Or | stole 2 from RED, 1 from WHITE (total 3)"
+
+
+def test_describe_play_monopoly_stole_nothing():
+    rec = _rec(Color.BLUE, ActionType.PLAY_MONOPOLY, "SHEEP", ("SHEEP", (), 0))
+    assert describe_action_record(rec) == "BLUE played Monopoly on Sh | stole nothing (total 0)"
+
+
 # ---------------------------------------------------------------------------
 # 12. PLAY_ROAD_BUILDING
 # ---------------------------------------------------------------------------
@@ -801,7 +812,7 @@ def test_format_public_history_window_last_twelve_turns():
         (Color.ORANGE, [(ActionType.ROLL, (3, 4), (3, 4)), (ActionType.MOVE_ROBBER, ((0, 0, 0), Color.RED), "WOOD"), (ActionType.END_TURN, None)]),
         (Color.WHITE, [(ActionType.ROLL, (4, 3), (4, 3)), (ActionType.PLAY_ROAD_BUILDING, None), (ActionType.BUILD_ROAD, (15, 20)), (ActionType.BUILD_ROAD, (20, 21)), (ActionType.END_TURN, None)]),
         (Color.RED, [(ActionType.ROLL, (6, 2), (6, 2)), (ActionType.PLAY_YEAR_OF_PLENTY, ("WOOD", "BRICK")), (ActionType.END_TURN, None)]),
-        (Color.BLUE, [(ActionType.ROLL, (5, 3), (5, 3)), (ActionType.PLAY_MONOPOLY, "ORE"), (ActionType.END_TURN, None)]),
+        (Color.BLUE, [(ActionType.ROLL, (5, 3), (5, 3)), (ActionType.PLAY_MONOPOLY, "ORE", ("ORE", ((Color.RED, 2), (Color.WHITE, 1)), 3)), (ActionType.END_TURN, None)]),
         (Color.ORANGE, [(ActionType.ROLL, (6, 6), (6, 6)), (ActionType.PLAY_KNIGHT_CARD, None), (ActionType.MOVE_ROBBER, ((1, -1, 0), Color.BLUE), None), (ActionType.END_TURN, None)]),
         (Color.WHITE, [(ActionType.ROLL, (3, 5), (3, 5)), (ActionType.BUILD_SETTLEMENT, 25), (ActionType.BUILD_ROAD, (25, 26)), (ActionType.END_TURN, None)]),
         (Color.RED, [(ActionType.ROLL, (4, 2), (4, 2)), (ActionType.MARITIME_TRADE, ("ORE", "ORE", None, None, "WOOD")), (ActionType.END_TURN, None)]),
@@ -849,7 +860,7 @@ def test_format_public_history_window_last_twelve_turns():
   - RED ended turn
 [TURN 10 (BLUE)]
   - BLUE rolled 5+3 = 8 | ORANGE + [1 Sh], WHITE + [1 Wd]
-  - BLUE played Monopoly on Or
+  - BLUE played Monopoly on Or | stole 2 from RED, 1 from WHITE (total 3)
   - BLUE ended turn
 [TURN 11 (ORANGE)]
   - ORANGE rolled 6+6 = 12 | ORANGE + [2 Wd]

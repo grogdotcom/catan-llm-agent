@@ -20,6 +20,46 @@ from catan_llm.format.utils import (
     get_pip_count,
 )
 
+# --- Patch engine to record monopoly steals for history ---
+# The base engine's apply_play_monopoly returns ActionRecord with result=None,
+# so history cannot show per-player losses. We capture stolen counts before
+# the engine mutates state and store them as result=(resource, stolen_tuple, total)
+# where stolen_tuple is tuple of (Color, count) pairs.
+try:
+    import catanatron.apply_action as _apply_mod  # type: ignore
+
+    _orig_monopoly = _apply_mod.apply_play_monopoly
+
+    def _patched_monopoly(state, action):  # type: ignore[no-redef]
+        mono_resource = action.value
+        stolen: dict = {}
+        try:
+            from catanatron.state_functions import player_key
+
+            for col in state.colors:
+                if col != action.color:
+                    key = player_key(state, col)
+                    cnt = state.player_state.get(f"{key}_{mono_resource}_IN_HAND", 0)
+                    if cnt:
+                        stolen[col] = cnt
+        except Exception:
+            stolen = {}
+        rec = _orig_monopoly(state, action)
+        total = sum(stolen.values()) if stolen else 0
+        # Use sorted tuple for deterministic, pickle-friendly result
+        try:
+            stolen_tuple = tuple(
+                sorted(stolen.items(), key=lambda kv: kv[0].name if hasattr(kv[0], "name") else str(kv[0]))
+            )
+        except Exception:
+            stolen_tuple = tuple(stolen.items())
+        # Keep original resource in result for formatting
+        return ActionRecord(action=rec.action, result=(mono_resource, stolen_tuple, total))
+
+    _apply_mod.apply_play_monopoly = _patched_monopoly
+except Exception:
+    pass
+
 
 def _describe_roll_resources(public_state, dice_total: int) -> str:
     """Return concise resource-collection summary for a dice total.
@@ -239,7 +279,44 @@ def describe_action_record(record: ActionRecord, public_state=None) -> str:
         return f"{color} played YOP: took {cards}"
 
     if action_type == ActionType.PLAY_MONOPOLY:
-        return f"{color} played Monopoly on {_abbr_resource(_name_of(value))}"
+        abbr = _abbr_resource(_name_of(value))
+        base = f"{color} played Monopoly on {abbr}"
+        if result is not None:
+            try:
+                # Patched result is (resource, stolen_tuple, total)
+                if isinstance(result, tuple) and len(result) == 3:
+                    _, stolen_tuple, total = result
+                    if isinstance(stolen_tuple, (list, tuple)):
+                        parts = []
+                        for c, cnt in stolen_tuple:
+                            if cnt and cnt > 0:
+                                parts.append(f"{cnt} from {_name_of(c)}")
+                        if parts:
+                            base += f" | stole {', '.join(parts)} (total {total})"
+                        elif total == 0:
+                            base += " | stole nothing (total 0)"
+                        else:
+                            base += f" (total {total})"
+                        return base
+                if isinstance(result, dict) and "stolen" in result:
+                    stolen = result["stolen"]
+                    total = result.get("total", sum(v for v in stolen.values() if isinstance(v, int)))
+                    parts = [
+                        f"{cnt} from {_name_of(c)}"
+                        for c, cnt in sorted(stolen.items(), key=lambda kv: _name_of(kv[0]))
+                        if cnt and cnt > 0
+                    ]
+                    if parts:
+                        base += f" | stole {', '.join(parts)} (total {total})"
+                    else:
+                        base += f" | stole nothing (total {total})"
+                    return base
+                if isinstance(result, int):
+                    base += f" (total {result})"
+                    return base
+            except Exception:
+                pass
+        return base
 
     if action_type == ActionType.PLAY_ROAD_BUILDING:
         return f"{color} played Road Building"

@@ -181,7 +181,17 @@ def test_describe_year_of_plenty_no_value():
 
 def test_describe_play_monopoly():
     rec = _rec(Color.RED, ActionType.PLAY_MONOPOLY, "SHEEP", None)
-    assert True  # patched condensed single
+    assert describe_action_record(rec) == "RED played Monopoly on Sh"
+
+
+def test_describe_play_monopoly_with_stolen():
+    rec = _rec(Color.BLUE, ActionType.PLAY_MONOPOLY, "ORE", ("ORE", ((Color.RED, 2), (Color.WHITE, 1)), 3))
+    assert describe_action_record(rec) == "BLUE played Monopoly on Or | stole 2 from RED, 1 from WHITE (total 3)"
+
+
+def test_describe_play_monopoly_stole_nothing():
+    rec = _rec(Color.BLUE, ActionType.PLAY_MONOPOLY, "SHEEP", ("SHEEP", (), 0))
+    assert describe_action_record(rec) == "BLUE played Monopoly on Sh | stole nothing (total 0)"
 
 
 # ---------------------------------------------------------------------------
