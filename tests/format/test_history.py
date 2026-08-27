@@ -185,7 +185,7 @@ def test_describe_end_turn():
 
 def test_describe_build_settlement():
     rec = _rec(Color.BLUE, ActionType.BUILD_SETTLEMENT, 12, None)
-    assert describe_action_record(rec, _dummy_ps()) == "BLUE built S Node 12 [no tiles | 0p]"
+    assert describe_action_record(rec, _dummy_ps()) == "BLUE built Settlement Node 12 [no tiles | 0p]"
 
 
 # ---------------------------------------------------------------------------
@@ -194,7 +194,7 @@ def test_describe_build_settlement():
 
 def test_describe_build_city():
     rec = _rec(Color.BLUE, ActionType.BUILD_CITY, 12, None)
-    assert describe_action_record(rec, _dummy_ps()) == "BLUE built C Node 12 [no tiles | 0p]"
+    assert describe_action_record(rec, _dummy_ps()) == "BLUE built City Node 12 [no tiles | 0p]"
 
 
 # ---------------------------------------------------------------------------
@@ -591,9 +591,9 @@ def test_describe_turn_and_format_public_history():
     text = format_public_history(records, _dummy_ps())
     expected = """[PUBLIC HISTORY]
 [SETUP]
-  - RED built S Node 0 [no tiles | 0p]
+  - RED built Settlement Node 0 [no tiles | 0p]
   - RED built road (0, 1)
-  - BLUE built S Node 5 [no tiles | 0p]
+  - BLUE built Settlement Node 5 [no tiles | 0p]
   - BLUE built road (5, 6)
 [TURN 1 (RED)]
   - RED rolled 2+3 = 5 | no resources
@@ -743,8 +743,8 @@ def test_format_public_history_window_setup_only():
     
     # Should contain setup
     assert "[SETUP]" in result
-    assert "RED built S Node 0" in result
-    assert "BLUE built S Node 5" in result
+    assert "RED built Settlement Node 0" in result
+    assert "BLUE built Settlement Node 5" in result
     
     # Should contain setup-only indicator
     assert "[Showing setup phase only]" in result
@@ -864,7 +864,7 @@ def test_format_public_history_window_last_twelve_turns():
   - WHITE ended turn
 [TURN 5 (RED)]
   - RED rolled 5+4 = 9 | RED + [1 Or]
-  - RED built C Node 0 [no tiles | 0p]
+  - RED built City Node 0 [no tiles | 0p]
   - RED ended turn
 [TURN 6 (BLUE)]
   - BLUE rolled 2+5 = 7
@@ -896,7 +896,7 @@ def test_format_public_history_window_last_twelve_turns():
   - ORANGE ended turn
 [TURN 12 (WHITE)]
   - WHITE rolled 3+5 = 8 | ORANGE + [1 Sh], WHITE + [1 Wd]
-  - WHITE built S Node 25 [no tiles | 0p]
+  - WHITE built Settlement Node 25 [no tiles | 0p]
   - WHITE built road (25, 26)
   - WHITE ended turn
 [TURN 13 (RED)]
@@ -909,7 +909,7 @@ def test_format_public_history_window_last_twelve_turns():
   - BLUE ended turn
 [TURN 15 (ORANGE)]
   - ORANGE rolled 5+5 = 10 | ORANGE + [1 Br]
-  - ORANGE built C Node 10 [5-Br | 4p]
+  - ORANGE built City Node 10 [5 Br | 4p]
   - ORANGE built road (10, 15)
   - ORANGE ended turn"""
     assert result == expected

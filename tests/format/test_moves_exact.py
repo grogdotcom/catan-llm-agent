@@ -145,13 +145,13 @@ def test_label_build_settlement_simple_exact():
     ps = _mock_public_state_for_node5()
     a = Action(Color.RED, ActionType.BUILD_SETTLEMENT, 5)
     # Node 5 is in mock with tiles 0+1 => enriched
-    assert _label_action(a, ps) == "Settlement Node 5 [8-Wd, 6-Wd | 10p]"
+    assert _label_action(a, ps) == "Settlement Node 5 [8 Wd, 6 Wd | 10p]"
 
 
 def test_label_build_city_simple_exact():
     ps = _mock_public_state_for_node5()
     a = Action(Color.RED, ActionType.BUILD_CITY, 0)
-    assert _label_action(a, ps) == "City Node 0 [8-Wd | 5p]"
+    assert _label_action(a, ps) == "City Node 0 [8 Wd | 5p]"
 
 
 def test_label_buy_dev_card_exact():
@@ -182,13 +182,13 @@ def test_label_play_road_building_exact():
 def test_label_move_robber_no_steal_exact():
     ps = _mock_public_state_with_settlements()
     a = Action(Color.RED, ActionType.MOVE_ROBBER, ((0, 0, 0), None))
-    assert _label_action(a, ps) == "Move robber to Tile 0: 8-Wd(5p) | BLUE settlement@N1(5p) 3c; RED settlement@N0(5p) 2c (no steal)"
+    assert _label_action(a, ps) == "Move robber to Tile 0: 8-Wd(5p) | blocks 5p from BLUE; 5p from RED (no steal)"
 
 
 def test_label_move_robber_steal_exact():
     ps = _mock_public_state_with_settlements()
     a = Action(Color.RED, ActionType.MOVE_ROBBER, ((0, 0, 0), Color.BLUE))
-    assert _label_action(a, ps) == "Move robber to Tile 0: 8-Wd(5p) | BLUE settlement@N1(5p) 3c; RED settlement@N0(5p) 2c and steal from BLUE"
+    assert _label_action(a, ps) == "Move robber to Tile 0: 8-Wd(5p) | blocks 5p from BLUE; 5p from RED and steal from BLUE"
 
 
 def test_label_discard_exact():
@@ -253,14 +253,14 @@ def test_label_build_settlement_enriched_exact():
     ps = _mock_public_state_for_node5()
     a = Action(Color.RED, ActionType.BUILD_SETTLEMENT, 5)
     # Node 5 touches Tile0: 8 WOOD (5 pips), Tile1: 6 WOOD (5 pips) => total 10
-    assert _label_action(a, ps) == "Settlement Node 5 [8-Wd, 6-Wd | 10p]"
+    assert _label_action(a, ps) == "Settlement Node 5 [8 Wd, 6 Wd | 10p]"
 
 
 def test_label_build_city_enriched_exact():
     ps = _mock_public_state_for_node5()
     a = Action(Color.RED, ActionType.BUILD_CITY, 0)
     # Node 0: only Tile0
-    assert _label_action(a, ps) == "City Node 0 [8-Wd | 5p]"
+    assert _label_action(a, ps) == "City Node 0 [8 Wd | 5p]"
 
 
 def test_label_build_road_enriched_exact_with_longest():
@@ -276,7 +276,7 @@ def test_label_build_road_enriched_exact_with_longest():
     # Node0: Tile0 only => (Tile 0: 8 WOOD (5 pips)) Total:5
     # Node1: Tile0 only => same -> 8-Wd
     # Node20: no adjacent tiles in mock => "no tiles" Total:0
-    expected = "Road (0, 5) -> Targets: Node 1 [8-Wd | 5p]✓, Node 20 [no tiles | 0p]✓ | LR 0->1(+1)"
+    expected = "Road (0, 5) -> Targets: Node 1 [8 Wd | 5p]✓, Node 20 [no tiles | 0p]✓ | LR 0->1(+1)"
     assert label == expected
 
 
@@ -285,14 +285,14 @@ def test_label_move_robber_enriched_exact():
     # Tile 0 (0,0,0) WOOD 8 touches Node0 (RED) and Node1 (BLUE)
     a = Action(Color.RED, ActionType.MOVE_ROBBER, ((0, 0, 0), None))
     label = _label_action(a, ps)
-    assert label == "Move robber to Tile 0: 8-Wd(5p) | BLUE settlement@N1(5p) 3c; RED settlement@N0(5p) 2c (no steal)"
+    assert label == "Move robber to Tile 0: 8-Wd(5p) | blocks 5p from BLUE; 5p from RED (no steal)"
 
 
 def test_label_move_robber_enriched_steal_exact():
     ps = _mock_public_state_with_settlements()
     a = Action(Color.RED, ActionType.MOVE_ROBBER, ((0, 0, 0), Color.BLUE))
     label = _label_action(a, ps)
-    assert label == "Move robber to Tile 0: 8-Wd(5p) | BLUE settlement@N1(5p) 3c; RED settlement@N0(5p) 2c and steal from BLUE"
+    assert label == "Move robber to Tile 0: 8-Wd(5p) | blocks 5p from BLUE; 5p from RED and steal from BLUE"
 
 
 # ---------------------------------------------------------------------------
@@ -415,7 +415,7 @@ def test_road_detail_tip_blocked_occupied_exact():
     ps.board.buildings[0] = (Color.BLUE, SETTLEMENT)
     label = _road_node_detail(ps, (0, 5), network_nodes=set(), extra_occupied=None)
     # Tip 0 is occupied, so no extends — now shows resources/rolls
-    assert label == " -> Targets: Node 0 [8-Wd | 5p]✗"
+    assert label == " -> Targets: Node 0 [8 Wd | 5p]✗"
 
 
 def test_road_detail_tip_blocked_too_close_shows_extends_exact():
@@ -491,7 +491,7 @@ def test_build_moves_initial_settlement_exact():
     # Node 0 in the mock has 5p and no port -> previously pruned, now viable
     moves_unfiltered = _setup_settlement_moves(a, ps)
     assert len(moves_unfiltered) > 0
-    assert moves_unfiltered[0].label.startswith("Settlement Node 0 [8-Wd | 5p]")
+    assert moves_unfiltered[0].label.startswith("Settlement Node 0 [8 Wd | 5p]")
 
     # Viable node: construct a state where Node 0 has 10p and a 3:1 port
     from catanatron.models.enums import WOOD
@@ -520,7 +520,7 @@ def test_build_moves_initial_settlement_exact():
     ps_viable = PublicState(board=board, players=players)
     moves = _setup_settlement_moves(a, ps_viable)
     # First road is (0,1) — compressed to " -> Target N2 (0p), N6 (5p)" (header already has full detail)
-    expected = "Settlement Node 0 [8-Wd, 6-Wd | 10p] | Road (0, 1) -> Target N2 (0p), N6 (5p)"
+    expected = "Settlement Node 0 [8 Wd, 6 Wd | 10p] | Road (0, 1) -> Target N2 (0p), N6 (5p)"
     assert moves[0].label == expected
     assert "Longest road" not in moves[0].label
 
@@ -533,7 +533,7 @@ def test_build_moves_knight_bundling_exact():
     # First follow-up is smallest tile_id (0) with victim BLUE (since BLUE at Node1)
     # Tile 0 detail includes both occupants, sorted BLUE then RED
     first = moves[0]
-    assert first.label == "Play Knight -> move robber to Tile 0: 8-Wd(5p) | BLUE settlement@N1(5p) 3c; RED settlement@N0(5p) 2c and steal from BLUE"
+    assert first.label == "Play Knight -> move robber to Tile 0: 8-Wd(5p) | blocks 5p from BLUE; 5p from RED and steal from BLUE"
     assert len(first.actions) == 2
     assert first.actions[0] == knight
     assert first.actions[1].action_type == ActionType.MOVE_ROBBER
@@ -552,7 +552,7 @@ def test_build_moves_build_settlement_simple_exact():
     obs = Observation(color=Color.RED, current_prompt=ActionPrompt.PLAY_TURN, public_state=ps, features={})
     a = Action(Color.RED, ActionType.BUILD_SETTLEMENT, 5)
     moves = build_moves([a], obs)
-    assert moves[0].label == "Settlement Node 5 [8-Wd, 6-Wd | 10p]"
+    assert moves[0].label == "Settlement Node 5 [8 Wd, 6 Wd | 10p]"
 
 
 def test_build_moves_move_robber_exact():

@@ -299,7 +299,7 @@ def _calculate_production(buildings: List[BuildingInfo], multiplier: int = 1) ->
 def _format_building_string(building: BuildingInfo) -> str:
     """Format a BuildingInfo object into a condensed display string.
 
-    Produces e.g. ``Node 19 [4-Sh, 8-Wd, 3-Wh | 10p]``.
+    Produces e.g. ``Node 19 [4 Sh, 8 Wd, 3 Wh | 10p]``.
 
     Args:
         building: The BuildingInfo object to format
@@ -314,7 +314,7 @@ def _format_building_string(building: BuildingInfo) -> str:
         abbr = _abbr_resource(hx.resource)
         # roll may be None for desert-adjacent edge case — skip those
         if hx.roll is not None:
-            hex_parts.append(f"{hx.roll}-{abbr}")
+            hex_parts.append(f"{hx.roll} {abbr}")
         else:
             hex_parts.append(abbr)
     hex_str = ", ".join(hex_parts) if hex_parts else "no tiles"
@@ -325,7 +325,7 @@ def _format_building_string(building: BuildingInfo) -> str:
 def format_board_occupancy_data(occupancy_data: BoardOccupancyData) -> str:
     """Format board occupancy data into a condensed readable string.
 
-    Condensed per-building: ``Node 19 [4-Sh, 8-Wd, 3-Wh | 10p]``.
+    Condensed per-building: ``Node 19 [4 Sh, 8 Wd, 3 Wh | 10p]``.
     Empty sub-sections omitted beyond the production line.
 
     Args:

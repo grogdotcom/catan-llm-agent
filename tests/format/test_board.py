@@ -1074,19 +1074,19 @@ def test_format_board_occupancy_data_exact_string_deterministic_game():
     
     expected = """[CURRENT BOARD OCCUPANCY]
 - BLUE: Total: 37p (Wd:15, Sh:7, Wh:15)
-  * Settlements: Node 5 [11-Sh, 5-Wh, 4-Wh | 9p], Node 6 [10-Wd, 9-Sh, 2-Sh | 8p]
-  * Cities (x2): Node 15 [6-Wd, 5-Wh, 12-Wd | 10p]
+  * Settlements: Node 5 [11 Sh, 5 Wh, 4 Wh | 9p], Node 6 [10 Wd, 9 Sh, 2 Sh | 8p]
+  * Cities (x2): Node 15 [6 Wd, 5 Wh, 12 Wd | 10p]
   * Roads: (5, 16), (6, 21), (15, 20), (20, 25), (25, 26)
 - ORANGE: Total: 25p (Sh:20, Wh:5) Ports: Sh
-  * Settlements: Node 20 [4-Wh, 9-Sh, 3-Wh | 9p]
-  * Cities (x2): Node 25 [5-Sh | 4p], Node 26 [5-Sh | 4p]
+  * Settlements: Node 20 [4 Wh, 9 Sh, 3 Wh | 9p]
+  * Cities (x2): Node 25 [5 Sh | 4p], Node 26 [5 Sh | 4p]
   * Roads: (20, 21), (25, 30), (26, 31), (30, 35), (31, 36)
 - RED: Total: 52p (Wd:15, Br:18, Sh:12, Wh:3, Or:4)
-  * Settlements: Node 0 [11-Sh, 4-Wh, 9-Sh | 9p], Node 1 [11-Sh, 10-Wd, 9-Sh | 9p]
-  * Cities (x2): Node 10 [3-Br, 8-Br, 4-Wd | 10p], Node 11 [3-Br, 4-Wd, 11-Or | 7p]
+  * Settlements: Node 0 [11 Sh, 4 Wh, 9 Sh | 9p], Node 1 [11 Sh, 10 Wd, 9 Sh | 9p]
+  * Cities (x2): Node 10 [3 Br, 8 Br, 4 Wd | 10p], Node 11 [3 Br, 4 Wd, 11 Or | 7p]
   * Roads: (0, 5), (1, 6), (10, 15), (11, 16), (16, 22)
 - WHITE: Total: 3p (Wd:3) Ports: 3:1
-  * Settlements: Node 30 [4-Wd | 3p]
+  * Settlements: Node 30 [4 Wd | 3p]
   * Cities (x2): Node 35 [no tiles | 0p]
   * Roads: (30, 31), (35, 36), (35, 40), (36, 41), (40, 42)"""
     

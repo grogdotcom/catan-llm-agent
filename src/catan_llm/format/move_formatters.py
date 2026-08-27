@@ -73,7 +73,7 @@ def _describe_node(public_state: PublicState, node_id: int) -> str:
     for hx in adjacent_hexes:
         abbr = _abbr_resource(hx.resource)
         if hx.roll is not None:
-            parts.append(f"{hx.roll}-{abbr}")
+            parts.append(f"{hx.roll} {abbr}")
         else:
             parts.append(abbr)
     hex_str = ", ".join(parts) if parts else "no tiles"
@@ -231,7 +231,7 @@ def _robber_tile_detail(public_state: PublicState, coordinate) -> str:
     for nid, tids in public_state.board.map.adjacent_tiles.items():
         for tid in tids:
             tiles_to_nodes[tid].append(nid)
-    occupants: Dict[Any, List[Tuple[int, str, int]]] = defaultdict(list)
+    blocked_by_owner: Dict[Any, int] = defaultdict(int)
     for node_id in tiles_to_nodes.get(tile_id, []):
         building = public_state.board.buildings.get(node_id)
         if building is None:
@@ -240,19 +240,16 @@ def _robber_tile_detail(public_state: PublicState, coordinate) -> str:
         btype_name = btype.name if hasattr(btype, 'name') else str(btype)
         multiplier = 2 if btype_name == "CITY" else 1
         blocked = pips * multiplier if resource is not None else 0
-        occupants[owner].append((node_id, btype_name, blocked))
-    if not occupants:
+        blocked_by_owner[owner] += blocked
+    if not blocked_by_owner:
         return f"{tile_str} | no occupants"
-    parts = []
-    for owner in sorted(occupants.keys(), key=lambda c: getattr(c, "name", str(c))):
-        color_name = _name_of(owner)
-        hand_cards = public_state.players.get(owner)
-        card_count = getattr(hand_cards, "hand_resource_count", "?") if hand_cards is not None else "?"
-        nodes_desc = ", ".join(
-            f"{btype.lower()}@N{nid}({bp}p)" for nid, btype, bp in sorted(occupants[owner])
-        )
-        parts.append(f"{color_name} {nodes_desc} {card_count}c")
-    return f"{tile_str} | {'; '.join(parts)}"
+    # Sort by blocked pips descending, then color name for stable tiebreak
+    sorted_owners = sorted(
+        blocked_by_owner.items(),
+        key=lambda kv: (-kv[1], getattr(kv[0], "name", str(kv[0]))),
+    )
+    parts = [f"{bp}p from {_name_of(owner)}" for owner, bp in sorted_owners]
+    return f"{tile_str} | blocks {'; '.join(parts)}"
 
 
 def _road_node_detail(
@@ -922,7 +919,7 @@ class BuildCityFormatter(BaseMoveFormatter):
         color = _name_of(record.action.color)
         value = record.action.value
         node_desc = _describe_node(public_state, value)
-        return f"{color} built C {node_desc}"
+        return f"{color} built City {node_desc}"
 
 
 class DiscardResourceFormatter(BaseMoveFormatter):
@@ -997,7 +994,7 @@ class BuildSettlementFormatter(BaseMoveFormatter):
         color = _name_of(record.action.color)
         value = record.action.value
         node_desc = _describe_node(public_state, value)
-        return f"{color} built S {node_desc}"
+        return f"{color} built Settlement {node_desc}"
 
     def expand(self, action: Action, observation) -> List[Move]:
         public_state: PublicState = observation.public_state
