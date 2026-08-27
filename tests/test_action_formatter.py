@@ -1,3 +1,12 @@
+
+def _dummy_ps():
+    from catanatron.models.public_state import PublicState, PublicBoard, PublicMap, PublicPlayer
+    from catanatron.models.player import Color
+    public_map = PublicMap(tiles={}, tile_coordinates={}, ports={}, adjacent_tiles={}, land_nodes=frozenset())
+    board = PublicBoard(buildings={}, roads={}, robber_tile_id=None, longest_road_color=None, longest_road_length=0, map=public_map)
+    players = {Color.RED: PublicPlayer(public_vps=0, has_army=False, has_road=False, longest_road_length=0, roads_left=15, settlements_left=5, cities_left=4, has_rolled=False, hand_resource_count=0, hand_dev_count=0, played_knight=0, played_monopoly=0, played_road_building=0, played_year_of_plenty=0, played_victory_point=0), Color.BLUE: PublicPlayer(public_vps=0, has_army=False, has_road=False, longest_road_length=0, roads_left=15, settlements_left=5, cities_left=4, has_rolled=False, hand_resource_count=0, hand_dev_count=0, played_knight=0, played_monopoly=0, played_road_building=0, played_year_of_plenty=0, played_victory_point=0)}
+    return PublicState(board=board, players=players)
+
 """
 Unit tests for playable-action formatting, compound-move planning, and the
 LLM agent integration.

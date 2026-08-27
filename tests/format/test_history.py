@@ -16,6 +16,33 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../
 from catanatron.models.enums import Action, ActionRecord, ActionType
 from catanatron.models.player import Color
 from catan_llm.format.history import describe_action_record, format_public_history_window
+
+def _dummy_ps():
+    from catanatron.models.public_state import PublicState, PublicBoard, PublicMap, PublicPlayer
+    from catanatron.models.player import Color
+    public_map = PublicMap(
+        tiles={},
+        tile_coordinates={},
+        ports={},
+        adjacent_tiles={},
+        land_nodes=frozenset(),
+    )
+    board = PublicBoard(
+        buildings={},
+        roads={},
+        robber_tile_id=None,
+        longest_road_color=None,
+        longest_road_length=0,
+        map=public_map,
+    )
+    players = {
+        Color.RED: PublicPlayer(public_vps=0, has_army=False, has_road=False, longest_road_length=0, roads_left=15, settlements_left=5, cities_left=4, has_rolled=False, hand_resource_count=0, hand_dev_count=0, played_knight=0, played_monopoly=0, played_road_building=0, played_year_of_plenty=0, played_victory_point=0),
+        Color.BLUE: PublicPlayer(public_vps=0, has_army=False, has_road=False, longest_road_length=0, roads_left=15, settlements_left=5, cities_left=4, has_rolled=False, hand_resource_count=0, hand_dev_count=0, played_knight=0, played_monopoly=0, played_road_building=0, played_year_of_plenty=0, played_victory_point=0),
+        Color.ORANGE: PublicPlayer(public_vps=0, has_army=False, has_road=False, longest_road_length=0, roads_left=15, settlements_left=5, cities_left=4, has_rolled=False, hand_resource_count=0, hand_dev_count=0, played_knight=0, played_monopoly=0, played_road_building=0, played_year_of_plenty=0, played_victory_point=0),
+        Color.WHITE: PublicPlayer(public_vps=0, has_army=False, has_road=False, longest_road_length=0, roads_left=15, settlements_left=5, cities_left=4, has_rolled=False, hand_resource_count=0, hand_dev_count=0, played_knight=0, played_monopoly=0, played_road_building=0, played_year_of_plenty=0, played_victory_point=0),
+    }
+    return PublicState(board=board, players=players)
+
 from catanatron.models.enums import WOOD, BRICK, SHEEP, WHEAT, ORE, SETTLEMENT, CITY
 from catanatron.models.public_state import PublicBoard, PublicMap, PublicPlayer, PublicState
 
@@ -130,17 +157,17 @@ def _mock_roll_state() -> PublicState:
 
 def test_describe_roll_with_result():
     rec = _rec(Color.RED, ActionType.ROLL, (6, 1), (6, 1))
-    assert describe_action_record(rec) == "RED rolled 6+1 = 7"
+    assert describe_action_record(rec, _dummy_ps()) == "RED rolled 6+1 = 7"
 
 
 def test_describe_roll_with_value_fallback():
     rec = _rec(Color.RED, ActionType.ROLL, (3, 4), None)
-    assert describe_action_record(rec) == "RED rolled 3+4 = 7"
+    assert describe_action_record(rec, _dummy_ps()) == "RED rolled 3+4 = 7"
 
 
 def test_describe_roll_no_dice():
     rec = _rec(Color.RED, ActionType.ROLL, None, None)
-    assert describe_action_record(rec) == "RED rolled"
+    assert describe_action_record(rec, _dummy_ps()) == "RED rolled"
 
 
 # ---------------------------------------------------------------------------
@@ -149,7 +176,7 @@ def test_describe_roll_no_dice():
 
 def test_describe_end_turn():
     rec = _rec(Color.ORANGE, ActionType.END_TURN, None, None)
-    assert describe_action_record(rec) == "ORANGE ended turn"
+    assert describe_action_record(rec, _dummy_ps()) == "ORANGE ended turn"
 
 
 # ---------------------------------------------------------------------------
@@ -158,7 +185,7 @@ def test_describe_end_turn():
 
 def test_describe_build_settlement():
     rec = _rec(Color.BLUE, ActionType.BUILD_SETTLEMENT, 12, None)
-    assert describe_action_record(rec) == "BLUE built S Node 12"
+    assert describe_action_record(rec, _dummy_ps()) == "BLUE built S Node 12 [no tiles | 0p]"
 
 
 # ---------------------------------------------------------------------------
@@ -167,7 +194,7 @@ def test_describe_build_settlement():
 
 def test_describe_build_city():
     rec = _rec(Color.BLUE, ActionType.BUILD_CITY, 12, None)
-    assert describe_action_record(rec) == "BLUE built C Node 12"
+    assert describe_action_record(rec, _dummy_ps()) == "BLUE built C Node 12 [no tiles | 0p]"
 
 
 # ---------------------------------------------------------------------------
@@ -176,12 +203,12 @@ def test_describe_build_city():
 
 def test_describe_build_road_sorted():
     rec = _rec(Color.BLUE, ActionType.BUILD_ROAD, (3, 1), None)
-    assert describe_action_record(rec) == "BLUE built road (1, 3)"
+    assert describe_action_record(rec, _dummy_ps()) == "BLUE built road (1, 3)"
 
 
 def test_describe_build_road_already_sorted():
     rec = _rec(Color.RED, ActionType.BUILD_ROAD, (0, 5), None)
-    assert describe_action_record(rec) == "RED built road (0, 5)"
+    assert describe_action_record(rec, _dummy_ps()) == "RED built road (0, 5)"
 
 
 # ---------------------------------------------------------------------------
@@ -190,17 +217,17 @@ def test_describe_build_road_already_sorted():
 
 def test_describe_buy_dev_card_known():
     rec = _rec(Color.RED, ActionType.BUY_DEVELOPMENT_CARD, "KNIGHT", "KNIGHT")
-    assert describe_action_record(rec) == "RED bought development card: KNIGHT"
+    assert describe_action_record(rec, _dummy_ps()) == "RED bought development card: KNIGHT"
 
 
 def test_describe_buy_dev_card_hidden_sanitized():
     rec = _rec(Color.BLUE, ActionType.BUY_DEVELOPMENT_CARD, None, None)
-    assert describe_action_record(rec) == "BLUE bought a development card"
+    assert describe_action_record(rec, _dummy_ps()) == "BLUE bought a development card"
 
 
 def test_describe_buy_dev_card_result_fallback():
     rec = _rec(Color.RED, ActionType.BUY_DEVELOPMENT_CARD, None, "VICTORY_POINT")
-    assert describe_action_record(rec) == "RED bought development card: VICTORY_POINT"
+    assert describe_action_record(rec, _dummy_ps()) == "RED bought development card: VICTORY_POINT"
 
 
 # ---------------------------------------------------------------------------
@@ -209,22 +236,22 @@ def test_describe_buy_dev_card_result_fallback():
 
 def test_describe_move_robber_no_steal():
     rec = _rec(Color.RED, ActionType.MOVE_ROBBER, ((0, 0, 0), None), None)
-    assert describe_action_record(rec) == "RED moved robber to (0, 0, 0) (no steal)"
+    assert describe_action_record(rec, _dummy_ps()) == "RED moved robber to (0, 0, 0) (no steal)"
 
 
 def test_describe_move_robber_steal_hidden():
     rec = _rec(Color.RED, ActionType.MOVE_ROBBER, ((0, 0, 0), Color.BLUE), None)
-    assert describe_action_record(rec) == "RED moved robber to (0, 0, 0) and stole from BLUE (card hidden)"
+    assert describe_action_record(rec, _dummy_ps()) == "RED moved robber to (0, 0, 0) and stole from BLUE (card hidden)"
 
 
 def test_describe_move_robber_steal_revealed():
     rec = _rec(Color.RED, ActionType.MOVE_ROBBER, ((0, 0, 0), Color.BLUE), "WHEAT")
-    assert describe_action_record(rec) == "RED moved robber to (0, 0, 0) and stole WHEAT from BLUE"
+    assert describe_action_record(rec, _dummy_ps()) == "RED moved robber to (0, 0, 0) and stole WHEAT from BLUE"
 
 
 def test_describe_move_robber_unknown_coordinate():
     rec = _rec(Color.RED, ActionType.MOVE_ROBBER, (None, None), None)
-    assert describe_action_record(rec) == "RED moved robber to unknown (no steal)"
+    assert describe_action_record(rec, _dummy_ps()) == "RED moved robber to unknown (no steal)"
 
 
 # Enriched TILE display — same tile string as board layout (Tile N: ROLL-Abbr(pips) / DESERT)
@@ -298,12 +325,12 @@ def test_describe_move_robber_enriched_shows_desert():
 
 def test_describe_discard_resource():
     rec = _rec(Color.WHITE, ActionType.DISCARD_RESOURCE, "ORE", "ORE")
-    assert describe_action_record(rec) == "WHITE discarded Or"
+    assert describe_action_record(rec, _dummy_ps()) == "WHITE discarded Or"
 
 
 def test_describe_discard_resource_result_fallback():
     rec = _rec(Color.WHITE, ActionType.DISCARD_RESOURCE, "WOOD", "BRICK")
-    assert describe_action_record(rec) == "WHITE discarded Br"
+    assert describe_action_record(rec, _dummy_ps()) == "WHITE discarded Br"
 
 
 # ---------------------------------------------------------------------------
@@ -312,7 +339,7 @@ def test_describe_discard_resource_result_fallback():
 
 def test_describe_play_knight():
     rec = _rec(Color.RED, ActionType.PLAY_KNIGHT_CARD, None, None)
-    assert describe_action_record(rec) == "RED played Knight"
+    assert describe_action_record(rec, _dummy_ps()) == "RED played Knight"
 
 
 # ---------------------------------------------------------------------------
@@ -321,17 +348,17 @@ def test_describe_play_knight():
 
 def test_describe_year_of_plenty_two_cards():
     rec = _rec(Color.RED, ActionType.PLAY_YEAR_OF_PLENTY, ("WOOD", "BRICK"), None)
-    assert describe_action_record(rec) == "RED played YOP: took Wd, Br"
+    assert describe_action_record(rec, _dummy_ps()) == "RED played YOP: took Wd, Br"
 
 
 def test_describe_year_of_plenty_single_card():
     rec = _rec(Color.RED, ActionType.PLAY_YEAR_OF_PLENTY, ("ORE",), None)
-    assert describe_action_record(rec) == "RED played YOP: took Or"
+    assert describe_action_record(rec, _dummy_ps()) == "RED played YOP: took Or"
 
 
 def test_describe_year_of_plenty_no_value():
     rec = _rec(Color.RED, ActionType.PLAY_YEAR_OF_PLENTY, None, None)
-    assert describe_action_record(rec) == "RED played YOP"
+    assert describe_action_record(rec, _dummy_ps()) == "RED played YOP"
 
 
 # ---------------------------------------------------------------------------
@@ -340,18 +367,18 @@ def test_describe_year_of_plenty_no_value():
 
 def test_describe_play_monopoly():
     rec = _rec(Color.RED, ActionType.PLAY_MONOPOLY, "SHEEP", None)
-    assert describe_action_record(rec) == "RED played MONOPOLY on SH"
+    assert describe_action_record(rec, _dummy_ps()) == "RED played MONOPOLY on SH"
 
 
 def test_describe_play_monopoly_with_stolen():
     # Patched engine stores (resource, stolen_tuple, total); history shows per-player losses condensed
     rec = _rec(Color.BLUE, ActionType.PLAY_MONOPOLY, "ORE", ("ORE", ((Color.RED, 2), (Color.WHITE, 1)), 3))
-    assert describe_action_record(rec) == "BLUE played MONOPOLY on OR | RED - 2 OR, WHITE - 1 OR (total 3)"
+    assert describe_action_record(rec, _dummy_ps()) == "BLUE played MONOPOLY on OR | RED - 2 OR, WHITE - 1 OR (total 3)"
 
 
 def test_describe_play_monopoly_stole_nothing():
     rec = _rec(Color.BLUE, ActionType.PLAY_MONOPOLY, "SHEEP", ("SHEEP", (), 0))
-    assert describe_action_record(rec) == "BLUE played MONOPOLY on SH | stole nothing (total 0)"
+    assert describe_action_record(rec, _dummy_ps()) == "BLUE played MONOPOLY on SH | stole nothing (total 0)"
 
 
 # ---------------------------------------------------------------------------
@@ -360,7 +387,7 @@ def test_describe_play_monopoly_stole_nothing():
 
 def test_describe_play_road_building():
     rec = _rec(Color.RED, ActionType.PLAY_ROAD_BUILDING, None, None)
-    assert describe_action_record(rec) == "RED played Road Building"
+    assert describe_action_record(rec, _dummy_ps()) == "RED played Road Building"
 
 
 # ---------------------------------------------------------------------------
@@ -369,17 +396,17 @@ def test_describe_play_road_building():
 
 def test_describe_maritime_trade_4to1():
     rec = _rec(Color.ORANGE, ActionType.MARITIME_TRADE, ("WHEAT", "WHEAT", "WHEAT", "WHEAT", "BRICK"), None)
-    assert describe_action_record(rec) == "ORANGE maritime trade: gives [4 Wh] to bank for Br"
+    assert describe_action_record(rec, _dummy_ps()) == "ORANGE maritime trade: gives [4 Wh] to bank for Br"
 
 
 def test_describe_maritime_trade_2to1_port():
     rec = _rec(Color.ORANGE, ActionType.MARITIME_TRADE, ("ORE", "ORE", None, None, "WOOD"), None)
-    assert describe_action_record(rec) == "ORANGE maritime trade: gives [2 Or] to bank for Wd"
+    assert describe_action_record(rec, _dummy_ps()) == "ORANGE maritime trade: gives [2 Or] to bank for Wd"
 
 
 def test_describe_maritime_trade_none_value():
     rec = _rec(Color.ORANGE, ActionType.MARITIME_TRADE, None, None)
-    assert describe_action_record(rec) == "ORANGE maritime traded"
+    assert describe_action_record(rec, _dummy_ps()) == "ORANGE maritime traded"
 
 
 # ---------------------------------------------------------------------------
@@ -389,12 +416,12 @@ def test_describe_maritime_trade_none_value():
 def test_describe_offer_trade():
     offer = (1, 0, 0, 0, 0, 0, 1, 0, 0, 0)
     rec = _rec(Color.RED, ActionType.OFFER_TRADE, offer, None)
-    assert describe_action_record(rec) == "RED offers [1 Wd] for [1 Br]"
+    assert describe_action_record(rec, _dummy_ps()) == "RED offers [1 Wd] for [1 Br]"
 
 
 def test_describe_offer_trade_none_value():
     rec = _rec(Color.RED, ActionType.OFFER_TRADE, None, None)
-    assert describe_action_record(rec) == "RED offered a trade"
+    assert describe_action_record(rec, _dummy_ps()) == "RED offered a trade"
 
 
 # ---------------------------------------------------------------------------
@@ -404,12 +431,12 @@ def test_describe_offer_trade_none_value():
 def test_describe_accept_trade():
     offer = (1, 0, 0, 0, 0, 0, 1, 0, 0, 0)
     rec = _rec(Color.BLUE, ActionType.ACCEPT_TRADE, offer, None)
-    assert describe_action_record(rec) == "BLUE accepted trade: offers [1 Wd] for [1 Br]"
+    assert describe_action_record(rec, _dummy_ps()) == "BLUE accepted trade: offers [1 Wd] for [1 Br]"
 
 
 def test_describe_accept_trade_none_value():
     rec = _rec(Color.BLUE, ActionType.ACCEPT_TRADE, None, None)
-    assert describe_action_record(rec) == "BLUE accepted a trade"
+    assert describe_action_record(rec, _dummy_ps()) == "BLUE accepted a trade"
 
 
 # ---------------------------------------------------------------------------
@@ -419,12 +446,12 @@ def test_describe_accept_trade_none_value():
 def test_describe_reject_trade():
     offer = (1, 0, 0, 0, 0, 0, 1, 0, 0, 0)
     rec = _rec(Color.ORANGE, ActionType.REJECT_TRADE, offer, None)
-    assert describe_action_record(rec) == "ORANGE rejected trade: offers [1 Wd] for [1 Br]"
+    assert describe_action_record(rec, _dummy_ps()) == "ORANGE rejected trade: offers [1 Wd] for [1 Br]"
 
 
 def test_describe_reject_trade_none_value():
     rec = _rec(Color.ORANGE, ActionType.REJECT_TRADE, None, None)
-    assert describe_action_record(rec) == "ORANGE rejected a trade"
+    assert describe_action_record(rec, _dummy_ps()) == "ORANGE rejected a trade"
 
 
 # ---------------------------------------------------------------------------
@@ -435,12 +462,12 @@ def test_describe_confirm_trade():
     offer = (1, 0, 0, 0, 0, 0, 1, 0, 0, 0)
     confirm = offer + (Color.BLUE,)
     rec = _rec(Color.RED, ActionType.CONFIRM_TRADE, confirm, None)
-    assert describe_action_record(rec) == "RED gave BLUE [1 Wd] for [1 Br]"
+    assert describe_action_record(rec, _dummy_ps()) == "RED gave BLUE [1 Wd] for [1 Br]"
 
 
 def test_describe_confirm_trade_none_value():
     rec = _rec(Color.RED, ActionType.CONFIRM_TRADE, None, None)
-    assert describe_action_record(rec) == "RED traded"
+    assert describe_action_record(rec, _dummy_ps()) == "RED traded"
 
 
 # ---------------------------------------------------------------------------
@@ -449,7 +476,7 @@ def test_describe_confirm_trade_none_value():
 
 def test_describe_cancel_trade():
     rec = _rec(Color.RED, ActionType.CANCEL_TRADE, None, None)
-    assert describe_action_record(rec) == "RED cancelled trade"
+    assert describe_action_record(rec, _dummy_ps()) == "RED cancelled trade"
 
 
 # ---------------------------------------------------------------------------
@@ -465,7 +492,7 @@ def test_describe_fallback_unknown_action():
 
     dummy_action = Action(Color.RED, DummyType(), {"foo": 1})
     rec = ActionRecord(dummy_action, None)
-    assert describe_action_record(rec) == "RED CUSTOM_ACTION: value={'foo': 1}, result=None"
+    assert describe_action_record(rec, _dummy_ps()) == "RED CUSTOM_ACTION: value={'foo': 1}, result=None"
 
 # === Migrated from test_board.py — grouping & windowed history (proper home = history) ===
 
@@ -561,15 +588,15 @@ def test_describe_turn_and_format_public_history():
         _rec(Color.BLUE, ActionType.MOVE_ROBBER, ((0, 0, 0), Color.RED), None),
         _rec(Color.BLUE, ActionType.END_TURN),
     )
-    text = format_public_history(records)
+    text = format_public_history(records, _dummy_ps())
     expected = """[PUBLIC HISTORY]
 [SETUP]
-  - RED built S Node 0
+  - RED built S Node 0 [no tiles | 0p]
   - RED built road (0, 1)
-  - BLUE built S Node 5
+  - BLUE built S Node 5 [no tiles | 0p]
   - BLUE built road (5, 6)
 [TURN 1 (RED)]
-  - RED rolled 2+3 = 5
+  - RED rolled 2+3 = 5 | no resources
   - RED ended turn
 [TURN 2 (BLUE)]
   - BLUE rolled 6+1 = 7
@@ -578,13 +605,13 @@ def test_describe_turn_and_format_public_history():
   - BLUE ended turn"""
     assert text == expected
 
-    turn_only = describe_turn(records[4:6], turn_label="TURN 1 (RED)")
-    assert turn_only == "[TURN 1 (RED)]\n  - RED rolled 2+3 = 5\n  - RED ended turn"
+    turn_only = describe_turn(records[4:6], turn_label="TURN 1 (RED)", public_state=_dummy_ps())
+    assert turn_only == "[TURN 1 (RED)]\n  - RED rolled 2+3 = 5 | no resources\n  - RED ended turn"
 
 
 
 def test_format_public_history_empty():
-    assert format_public_history(()) == "[PUBLIC HISTORY]\n  (empty)"
+    assert format_public_history((), _dummy_ps()) == "[PUBLIC HISTORY]\n  (empty)"
     assert format_public_history_window((), window_size=2) == "[PUBLIC HISTORY]\n  (empty)"
 
 
@@ -619,7 +646,7 @@ def test_group_and_format_real_sanitized_history():
     flattened = tuple(r for g in groups for r in g)
     assert flattened == history
 
-    text = format_public_history(history)
+    text = format_public_history(history, _dummy_ps())
     assert text.startswith("[PUBLIC HISTORY]\n[SETUP]")
     assert "rolled" in text
     assert "ended turn" in text
@@ -658,8 +685,8 @@ def test_format_public_history_window_full_history():
         _rec(Color.BLUE, ActionType.END_TURN),
     )
     
-    window_result = format_public_history_window(records, window_size=None)
-    original_result = format_public_history(records)
+    window_result = format_public_history_window(records, window_size=None, public_state=_dummy_ps())
+    original_result = format_public_history(records, _dummy_ps())
     
     assert window_result == original_result
 
@@ -681,7 +708,7 @@ def test_format_public_history_window_last_two_turns():
         _rec(Color.RED, ActionType.END_TURN),
     )
     
-    result = format_public_history_window(records, window_size=2)
+    result = format_public_history_window(records, window_size=2, public_state=_dummy_ps())
     
     # Setup omitted in midgame truncated window (user intent: drop initial placement after early game)
     assert "[SETUP]" not in result
@@ -712,7 +739,7 @@ def test_format_public_history_window_setup_only():
         _rec(Color.BLUE, ActionType.END_TURN),
     )
     
-    result = format_public_history_window(records, window_size=0)
+    result = format_public_history_window(records, window_size=0, public_state=_dummy_ps())
     
     # Should contain setup
     assert "[SETUP]" in result
@@ -747,7 +774,7 @@ def test_format_public_history_window_single_turn():
         _rec(Color.RED, ActionType.END_TURN),
     )
     
-    result = format_public_history_window(records, window_size=1)
+    result = format_public_history_window(records, window_size=1, public_state=_dummy_ps())
     
     # Should contain setup
     assert "[SETUP]" in result
@@ -774,7 +801,7 @@ def test_format_public_history_window_larger_than_total():
         _rec(Color.BLUE, ActionType.END_TURN),
     )
     
-    result = format_public_history_window(records, window_size=10)
+    result = format_public_history_window(records, window_size=10, public_state=_dummy_ps())
     
     # Should contain setup and both turns (no window indicator since window >= total)
     assert "[SETUP]" in result
@@ -902,7 +929,7 @@ def test_format_public_history_window_twelve_equals_total_includes_setup():
         turns.append(_rec(Color.RED, ActionType.END_TURN))
     records = setup + tuple(turns)
 
-    result = format_public_history_window(records, window_size=12)
+    result = format_public_history_window(records, window_size=12, public_state=_dummy_ps())
 
     assert "[SETUP]" in result
     assert "[Showing last" not in result

@@ -21,6 +21,15 @@ from catan_llm.format import describe_action_record
 def _rec(color, action_type, value=None, result=None):
     return ActionRecord(Action(color, action_type, value), result)
 
+def _dummy_ps():
+    from catanatron.models.public_state import PublicState, PublicBoard, PublicMap, PublicPlayer
+    from catanatron.models.player import Color
+    public_map = PublicMap(tiles={}, tile_coordinates={}, ports={}, adjacent_tiles={}, land_nodes=frozenset())
+    board = PublicBoard(buildings={}, roads={}, robber_tile_id=None, longest_road_color=None, longest_road_length=0, map=public_map)
+    players = {Color.RED: PublicPlayer(public_vps=0, has_army=False, has_road=False, longest_road_length=0, roads_left=15, settlements_left=5, cities_left=4, has_rolled=False, hand_resource_count=0, hand_dev_count=0, played_knight=0, played_monopoly=0, played_road_building=0, played_year_of_plenty=0, played_victory_point=0), Color.BLUE: PublicPlayer(public_vps=0, has_army=False, has_road=False, longest_road_length=0, roads_left=15, settlements_left=5, cities_left=4, has_rolled=False, hand_resource_count=0, hand_dev_count=0, played_knight=0, played_monopoly=0, played_road_building=0, played_year_of_plenty=0, played_victory_point=0)}
+    return PublicState(board=board, players=players)
+
+
 
 # ---------------------------------------------------------------------------
 # 1. ROLL
@@ -181,17 +190,17 @@ def test_describe_year_of_plenty_no_value():
 
 def test_describe_play_monopoly():
     rec = _rec(Color.RED, ActionType.PLAY_MONOPOLY, "SHEEP", None)
-    assert describe_action_record(rec) == "RED played MONOPOLY on SH"
+    assert describe_action_record(rec, _dummy_ps()) == "RED played MONOPOLY on SH"
 
 
 def test_describe_play_monopoly_with_stolen():
     rec = _rec(Color.BLUE, ActionType.PLAY_MONOPOLY, "ORE", ("ORE", ((Color.RED, 2), (Color.WHITE, 1)), 3))
-    assert describe_action_record(rec) == "BLUE played MONOPOLY on OR | RED - 2 OR, WHITE - 1 OR (total 3)"
+    assert describe_action_record(rec, _dummy_ps()) == "BLUE played MONOPOLY on OR | RED - 2 OR, WHITE - 1 OR (total 3)"
 
 
 def test_describe_play_monopoly_stole_nothing():
     rec = _rec(Color.BLUE, ActionType.PLAY_MONOPOLY, "SHEEP", ("SHEEP", (), 0))
-    assert describe_action_record(rec) == "BLUE played MONOPOLY on SH | stole nothing (total 0)"
+    assert describe_action_record(rec, _dummy_ps()) == "BLUE played MONOPOLY on SH | stole nothing (total 0)"
 
 
 # ---------------------------------------------------------------------------
@@ -209,17 +218,17 @@ def test_describe_play_road_building():
 
 def test_describe_maritime_trade_4to1():
     rec = _rec(Color.ORANGE, ActionType.MARITIME_TRADE, ("WHEAT", "WHEAT", "WHEAT", "WHEAT", "BRICK"), None)
-    assert describe_action_record(rec) == "ORANGE maritime trade: gives [4 Wh] to bank for Br"
+    assert describe_action_record(rec, _dummy_ps()) == "ORANGE maritime trade: gives [4 Wh] to bank for Br"
 
 
 def test_describe_maritime_trade_2to1_port():
     rec = _rec(Color.ORANGE, ActionType.MARITIME_TRADE, ("ORE", "ORE", None, None, "WOOD"), None)
-    assert describe_action_record(rec) == "ORANGE maritime trade: gives [2 Or] to bank for Wd"
+    assert describe_action_record(rec, _dummy_ps()) == "ORANGE maritime trade: gives [2 Or] to bank for Wd"
 
 
 def test_describe_maritime_trade_none_value():
     rec = _rec(Color.ORANGE, ActionType.MARITIME_TRADE, None, None)
-    assert describe_action_record(rec) == "ORANGE maritime traded"
+    assert describe_action_record(rec, _dummy_ps()) == "ORANGE maritime traded"
 
 
 # ---------------------------------------------------------------------------

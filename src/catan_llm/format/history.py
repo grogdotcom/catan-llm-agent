@@ -1,24 +1,28 @@
 """
 History formatting — action records, turn grouping, and public history.
 
-Covers describe_action_record, group_action_records_by_turn, describe_turn,
-format_public_history and windowed variants.
+describe_action_record now delegates to the polymorphic formatters in
+``move_formatters`` (one type per ActionType) — same registry used by
+``moves.py``. Grouping/window logic stays here as it is turn-level, not
+per-action.
 """
 
 from collections import Counter, defaultdict
 from typing import Any, List, Optional, Sequence, Tuple
 
-from catanatron.models.enums import ActionRecord, ActionType, RESOURCES
+from catanatron.models.enums import ActionRecord, ActionType
 
 from catan_llm.format.models import _SETUP_ACTION_TYPES
 from catan_llm.format.utils import (
     _abbr_resource,
-    _format_maritime_trade_value,
-    _format_resource_counts,
-    _format_trade_offer_value,
     _name_of,
-    get_pip_count,
 )
+
+# Re-export describe helper for backwards compat — now lives in move_formatters.
+try:
+    from catan_llm.format.move_formatters import _describe_roll_resources  # noqa: F401
+except Exception:
+    pass
 
 # --- Patch engine to record monopoly steals for history ---
 # The base engine's apply_play_monopoly returns ActionRecord with result=None,
@@ -62,316 +66,17 @@ except Exception:
 
 
 def _describe_roll_resources(public_state, dice_total: int) -> str:
-    """Return concise resource-collection summary for a dice total.
+    """Backwards-compat shim — delegates to canonical helper in move_formatters."""
+    from catan_llm.format.move_formatters import _describe_roll_resources as _canonical
 
-    Includes blocked production when the roll matches the robber tile.
-    """
-
-    if public_state is None or dice_total == 7:
-        return ""
-    robber_tile_id = getattr(public_state.board, "robber_tile_id", None)
-    # Fallback for older board shape using robber_coordinate -> tile lookup
-    if robber_tile_id is None:
-        # Try to derive from coordinate if needed (not critical for tests)
-        robber_tile_id = getattr(public_state.board, "robber_tile", None)
-    gains: dict[str, List[str]] = defaultdict(list)
-    blocked_gains: dict[str, List[str]] = defaultdict(list)
-    blocked_pips: dict[str, int] = defaultdict(int)
-    tiles = getattr(public_state.board.map, "tiles", {})
-    adjacent_tiles = getattr(public_state.board.map, "adjacent_tiles", {})
-    buildings = getattr(public_state.board, "buildings", {})
-
-    # Pre-fetch robber tile info for blocked check
-    robber_resource = None
-    robber_roll = None
-    robber_pips = 0
-    if robber_tile_id is not None and robber_tile_id in tiles:
-        robber_resource, robber_roll = tiles[robber_tile_id]
-        robber_pips = get_pip_count(robber_roll)
-
-    for tile_id, (resource, roll) in tiles.items():
-        if roll != dice_total:
-            continue
-        if resource is None:
-            continue
-        resource_name = resource.name if hasattr(resource, "name") else str(resource)
-        is_robber = tile_id == robber_tile_id
-        # nodes adjacent to this tile
-        for node_id, tids in adjacent_tiles.items():
-            if tile_id not in tids:
-                continue
-            b = buildings.get(node_id)
-            if b is None:
-                continue
-            owner, btype = b
-            is_city = str(btype) == "CITY" or (hasattr(btype, "name") and btype.name == "CITY")
-            owner_name = _name_of(owner)
-            count = 2 if is_city else 1
-            if is_robber:
-                # Blocked production — record pips and resource counts
-                for _ in range(count):
-                    blocked_gains[owner_name].append(resource_name)
-                blocked_pips[owner_name] += robber_pips * count
-            else:
-                for _ in range(count):
-                    gains[owner_name].append(resource_name)
-
-    # Format gains part — abbreviated resources with bracketed counts
-    # Example: WHITE + [1 Br, 1 Wh], RED + [2 Br]
-    parts = []
-    for owner in sorted(gains.keys()):
-        cnt = Counter(gains[owner])
-        ordered = [r for r in RESOURCES if r in cnt]
-        inner = ", ".join(f"{cnt[r]} {_abbr_resource(r)}" for r in ordered)
-        parts.append(f"{owner} + [{inner}]")
-
-    blocked_parts = []
-    for owner in sorted(blocked_gains.keys()):
-        cnt = Counter(blocked_gains[owner])
-        ordered = [r for r in RESOURCES if r in cnt]
-        inner = ", ".join(f"{cnt[r]} {_abbr_resource(r)}" for r in ordered)
-        blocked_parts.append(f"{owner} [{inner}]")
-
-    if gains and blocked_parts:
-        return " | " + ", ".join(parts) + f" | blk " + ", ".join(blocked_parts)
-    if gains:
-        return " | " + ", ".join(parts)
-    if blocked_parts:
-        return f" | blk " + ", ".join(blocked_parts)
-    return " | no resources"
+    return _canonical(public_state, dice_total)
 
 
-def describe_action_record(record: ActionRecord, public_state=None) -> str:
-    """Describe a single ActionRecord as one structured human-readable line.
+def describe_action_record(record: ActionRecord, public_state) -> str:
+    """Describe a single ActionRecord — polymorphic dispatch (public_state required)."""
+    from catan_llm.format.move_formatters import get_formatter
 
-    Uses the sanitized public_history conventions: redacted fields (e.g. hidden
-    stolen card, opponent dev-card identity) are phrased as unknown/hidden.
-
-    When ``public_state`` is supplied, settlement/city/road/robber and roll
-    lines are enriched with the same tile/port/pip detail used in the
-    playable-move list (adjacent tile + port info with pips, road endpoints,
-    robber tile info, resources collected on roll).
-
-    Args:
-        record: A (possibly sanitized) ActionRecord from Observation.public_history.
-        public_state: Optional board snapshot for enriched detail.
-
-    Returns:
-        A single-line description such as ``RED rolled 4+3 = 7`` or
-        ``RED built settlement at Node 5: (Tile 0: 11 SHEEP (2 pips)) ...``.
-    """
-    action = record.action
-    color = _name_of(action.color)
-    action_type = action.action_type
-    value = action.value
-    result = record.result
-
-    if action_type == ActionType.ROLL:
-        dice = result if result is not None else value
-        if dice is not None and len(dice) == 2:
-            total = dice[0] + dice[1]
-            base = f"{color} rolled {dice[0]}+{dice[1]} = {total}"
-            if public_state is not None:
-                base += _describe_roll_resources(public_state, total)
-            return base
-        return f"{color} rolled"
-
-    if action_type == ActionType.END_TURN:
-        return f"{color} ended turn"
-
-    if action_type == ActionType.BUILD_SETTLEMENT:
-        if public_state is not None:
-            try:
-                from catan_llm.format.moves import _describe_node
-
-                node_desc = _describe_node(public_state, value)
-                return f"{color} built S {node_desc}"
-            except Exception:
-                pass
-        return f"{color} built S Node {value}"
-
-    if action_type == ActionType.BUILD_CITY:
-        if public_state is not None:
-            try:
-                from catan_llm.format.moves import _describe_node
-
-                node_desc = _describe_node(public_state, value)
-                return f"{color} built C {node_desc}"
-            except Exception:
-                pass
-        return f"{color} built C Node {value}"
-
-    if action_type == ActionType.BUILD_ROAD:
-        edge = tuple(sorted(value)) if value is not None else value
-        return f"{color} built road {edge}"
-
-    if action_type == ActionType.BUY_DEVELOPMENT_CARD:
-        card = result if result is not None else value
-        if card is None:
-            return f"{color} bought a development card"
-        return f"{color} bought development card: {_name_of(card)}"
-
-    if action_type == ActionType.MOVE_ROBBER:
-        coordinate = None
-        victim = None
-        if value is not None:
-            coordinate, victim = value[0], value[1]
-        # Tile display mirrors board layout: Tile N: ROLL-Abbr(Pips) / DESERT
-        tile_detail = None
-        if public_state is not None and coordinate is not None:
-            try:
-                tile_id = None
-                for tid, coord in public_state.board.map.tile_coordinates.items():
-                    if coord == coordinate:
-                        tile_id = tid
-                        break
-                if tile_id is not None:
-                    resource, roll = public_state.board.map.tiles.get(tile_id, (None, None))
-                    if resource is None:
-                        tile_detail = f"Tile {tile_id}: DESERT"
-                    else:
-                        res_name = resource.name if hasattr(resource, "name") else str(resource)
-                        abbr = _abbr_resource(res_name)
-                        pips = get_pip_count(roll)
-                        tile_detail = f"Tile {tile_id}: {roll}-{abbr}({pips}p)"
-                if tile_detail is None:
-                    from catan_llm.format.utils import _format_coordinate as _fmt_coord
-
-                    tile_detail = _fmt_coord(coordinate)
-            except Exception:
-                tile_detail = None
-        if tile_detail is not None:
-            coord_str = tile_detail
-        else:
-            if coordinate is not None:
-                from catan_llm.format.utils import _format_coordinate as _fmt_coord
-
-                try:
-                    coord_str = _fmt_coord(coordinate)
-                except Exception:
-                    coord_str = str(coordinate)
-            else:
-                coord_str = "unknown"
-        if victim is None:
-            return f"{color} moved robber to {coord_str} (no steal)"
-        victim_name = _name_of(victim)
-        if result is None:
-            return (
-                f"{color} moved robber to {coord_str} and stole from "
-                f"{victim_name} (card hidden)"
-            )
-        return (
-            f"{color} moved robber to {coord_str} and stole "
-            f"{_name_of(result)} from {victim_name}"
-        )
-
-    if action_type == ActionType.DISCARD_RESOURCE:
-        discarded = result if result is not None else value
-        return f"{color} discarded {_abbr_resource(_name_of(discarded))}"
-
-    if action_type == ActionType.PLAY_KNIGHT_CARD:
-        return f"{color} played Knight"
-
-    if action_type == ActionType.PLAY_YEAR_OF_PLENTY:
-        if value is None:
-            return f"{color} played YOP"
-        cards = ", ".join(_abbr_resource(_name_of(r)) for r in value)
-        return f"{color} played YOP: took {cards}"
-
-    if action_type == ActionType.PLAY_MONOPOLY:
-        # Condensed: BLUE played MONOPOLY on OR | RED - 2 OR, WHITE - 1 OR (total 3)
-        raw_res = _name_of(value) if value is not None else ""
-        abbr = _abbr_resource(raw_res).upper() if raw_res else ""
-        if not abbr and value is not None:
-            abbr = str(value).upper()
-        base = f"{color} played MONOPOLY on {abbr}" if abbr else f"{color} played MONOPOLY"
-        if result is not None:
-            try:
-                # Patched result is (resource, stolen_tuple, total)
-                if isinstance(result, tuple) and len(result) == 3:
-                    res_resource, stolen_tuple, total = result
-                    res_abbr = (
-                        _abbr_resource(_name_of(res_resource)).upper()
-                        if res_resource
-                        else abbr
-                    )
-                    if not res_abbr:
-                        res_abbr = abbr
-                    if isinstance(stolen_tuple, (list, tuple)):
-                        parts = []
-                        for c, cnt in stolen_tuple:
-                            if cnt and cnt > 0:
-                                parts.append(f"{_name_of(c)} - {cnt} {res_abbr}")
-                        if parts:
-                            base += f" | {', '.join(parts)} (total {total})"
-                        elif total == 0:
-                            base += " | stole nothing (total 0)"
-                        else:
-                            base += f" (total {total})"
-                        return base
-                if isinstance(result, dict) and "stolen" in result:
-                    stolen = result["stolen"]
-                    total = result.get("total", sum(v for v in stolen.values() if isinstance(v, int)))
-                    # try to get resource abbr from dict
-                    res_abbr = abbr
-                    if "resource" in result and result["resource"]:
-                        res_abbr = _abbr_resource(_name_of(result["resource"])).upper()
-                    parts = [
-                        f"{_name_of(c)} - {cnt} {res_abbr}"
-                        for c, cnt in sorted(stolen.items(), key=lambda kv: _name_of(kv[0]))
-                        if cnt and cnt > 0
-                    ]
-                    if parts:
-                        base += f" | {', '.join(parts)} (total {total})"
-                    else:
-                        base += f" | stole nothing (total {total})"
-                    return base
-                if isinstance(result, int):
-                    base += f" (total {result})"
-                    return base
-            except Exception:
-                pass
-        return base
-
-    if action_type == ActionType.PLAY_ROAD_BUILDING:
-        return f"{color} played Road Building"
-
-    if action_type == ActionType.MARITIME_TRADE:
-        if value is None:
-            return f"{color} maritime traded"
-        return f"{color} maritime trade: {_format_maritime_trade_value(value)}"
-
-    if action_type == ActionType.OFFER_TRADE:
-        if value is None:
-            return f"{color} offered a trade"
-        return f"{color} {_format_trade_offer_value(value)}"
-
-    if action_type == ActionType.ACCEPT_TRADE:
-        if value is None:
-            return f"{color} accepted a trade"
-        return f"{color} accepted trade: {_format_trade_offer_value(value)}"
-
-    if action_type == ActionType.REJECT_TRADE:
-        if value is None:
-            return f"{color} rejected a trade"
-        return f"{color} rejected trade: {_format_trade_offer_value(value)}"
-
-    if action_type == ActionType.CONFIRM_TRADE:
-        if value is None:
-            return f"{color} traded"
-        acceptor = _name_of(value[10]) if len(value) > 10 else "unknown"
-        try:
-            offered = _format_resource_counts(value[:5])
-            asking = _format_resource_counts(value[5:10])
-            return f"{color} gave {acceptor} [{offered}] for [{asking}]"
-        except Exception:
-            trade_part = _format_trade_offer_value(value[:10])
-            return f"{color} gave {acceptor} {trade_part}"
-
-    if action_type == ActionType.CANCEL_TRADE:
-        return f"{color} cancelled trade"
-
-    return f"{color} {action_type.name}: value={value!r}, result={result!r}"
+    return get_formatter(record.action.action_type).describe(record, public_state)
 
 
 def group_action_records_by_turn(
@@ -431,19 +136,7 @@ def describe_turn(
     turn_label: Optional[str] = None,
     public_state=None,
 ) -> str:
-    """Describe one turn group as structured human-readable text.
-
-    Args:
-        records: ActionRecords belonging to a single turn (from
-            ``group_action_records_by_turn``).
-        turn_label: Optional header label (e.g. ``"SETUP"``, ``"TURN 3"``).
-            When omitted, a label is inferred from the records.
-        public_state: Optional board snapshot for enriched detail (settlement
-            tile/port/pips, road endpoints, robber tile, roll resources).
-
-    Returns:
-        Multi-line string: a header line plus one bullet per event.
-    """
+    """Describe one turn group — public_state is required (never None)."""
     if not records:
         return f"[{turn_label or 'TURN'}]\n  (no events)"
 
@@ -466,7 +159,7 @@ def describe_turn(
         and all(r.action.action_type in _SETUP_ACTION_TYPES for r in records)
     )
     settlement_counts: dict[Any, int] = {}
-    if is_setup and public_state is not None:
+    if is_setup:
         settlement_counts = defaultdict(int)
 
     lines = [f"[{turn_label}]"]
@@ -522,17 +215,14 @@ def describe_turn(
 
         base = describe_action_record(record, public_state=public_state)
         # Second initial settlement per color → append starting resources
-        if is_setup and public_state is not None and record.action.action_type == ActionType.BUILD_SETTLEMENT:
+        if is_setup and record.action.action_type == ActionType.BUILD_SETTLEMENT:
             key = record.action.color
             settlement_counts[key] = settlement_counts.get(key, 0) + 1
             if settlement_counts[key] == 2:
-                try:
-                    from catan_llm.format.board import format_starting_resources
+                from catan_llm.format.board import format_starting_resources
 
-                    sr = format_starting_resources(public_state, record.action.value)
-                    base += f" → Starting resources: {sr}"
-                except Exception:
-                    pass
+                sr = format_starting_resources(public_state, record.action.value)
+                base += f" → Starting resources: {sr}"
         lines.append(f"  - {base}")
         i += 1
     return "\n".join(lines)

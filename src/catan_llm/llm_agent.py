@@ -55,7 +55,7 @@ class MoveExecutor:
     def next(
         self,
         playable_actions: List[Action],
-        public_state: Optional[PublicState] = None,
+        public_state=None,
     ) -> Optional[Action]:
         """Return the next queued Action, or None when the queue is empty.
 
