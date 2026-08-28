@@ -424,7 +424,7 @@ def get_complete_prompt(
         if resolved_prompt is not None:
             phase_name = resolved_prompt.name if hasattr(resolved_prompt, "name") else str(resolved_prompt)
             header_lines.append(f"[PHASE: {phase_name}]")
-        if header_lines:
+        if header_lines:  # pragma: no branch
             sections.append("\n".join(header_lines))
 
     # 4. Consolidated per-player inventories (compressed for initial setup)

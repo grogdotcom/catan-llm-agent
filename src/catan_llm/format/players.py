@@ -33,7 +33,7 @@ def get_player_resources(public_state: PublicState, current_player_color, curren
     """
     lines = ["[PLAYER RESOURCES]"]
 
-    # Use public_state for all players' public information
+    # Seating order (insertion order of public_state.players) — matches occupancy
     for color, player_data in public_state.players.items():
         color_name = _name_of(color)
 
@@ -73,7 +73,7 @@ def get_player_dev_cards(public_state: PublicState, current_player_color, curren
     """
     lines = ["[PLAYER DEVELOPMENT CARDS]"]
 
-    # Use public_state for all players' public information
+    # Seating order — matches occupancy
     for color, player_data in public_state.players.items():
         color_name = _name_of(color)
 
@@ -374,6 +374,13 @@ def get_players_summary(
     # PlayerBoardData is keyed by color name string
     occ_by_color: Dict[str, object] = {p.color: p for p in occupancy.players}
 
+    # Seating order (turn order): insertion order of public_state.players
+    # i.e. first, second, third, fourth to play — not alphabetical.
+    # Both [CURRENT BOARD OCCUPANCY] and [PLAYERS] use this so rows line up
+    # and order is static across the entire game.
+    def _sorted_players(ps: PublicState):
+        return ps.players.items()
+
     # --- Initial-setup compressed variant ---
     if is_initial:
         # Use compact pieces (5/4/15) and omit uniform zero fields
@@ -384,7 +391,7 @@ def get_players_summary(
         has_any_roads = False
         has_any_army = False
         per_player_vals = []
-        for color, player_data in public_state.players.items():
+        for color, player_data in _sorted_players(public_state):
             is_current = (color == current_player_color)
             inv = current_player_inventory if is_current else None
             # Resources non-zero?
@@ -423,7 +430,7 @@ def get_players_summary(
 
         # Otherwise per-player compact (only Pips/Ports/Pieces, plus any non-zero Resources/Dev/VP/Roads/Army if needed)
         lines = ["[PLAYERS] - INITIAL SETUP"]
-        for color, player_data in public_state.players.items():
+        for color, player_data in _sorted_players(public_state):
             color_name = _name_of(color)
             is_current = (color == current_player_color)
             tag = " (YOU)" if is_current else ""
@@ -457,7 +464,7 @@ def get_players_summary(
     # Hide zero Dev/Army when no player holds any (pure noise in early/midgame)
     has_any_dev = False
     has_any_army = False
-    for color, player_data in public_state.players.items():
+    for color, player_data in _sorted_players(public_state):
         is_current = (color == current_player_color)
         inv = current_player_inventory if is_current else None
         if is_current and inv is not None:
@@ -476,7 +483,7 @@ def get_players_summary(
             has_any_army = True
 
     lines = ["[PLAYERS]"]
-    for color, player_data in public_state.players.items():
+    for color, player_data in _sorted_players(public_state):
         color_name = _name_of(color)
         is_current = (color == current_player_color)
         tag = " (YOU)" if is_current else ""

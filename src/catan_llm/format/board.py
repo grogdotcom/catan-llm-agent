@@ -139,7 +139,10 @@ def gather_board_occupancy_data(public_state: PublicState) -> BoardOccupancyData
     """
     players_data = []
 
-    # Iterate over players in public_state
+    # Seating order (turn order) — iterate in public_state insertion order,
+    # which is the player order supplied to Game(...) (first, second, third, fourth).
+    # This matches get_players_summary so occupancy vs players rows line up
+    # and is static across the entire game.
     for color in public_state.players.keys():
         color_name = color.name if hasattr(color, 'name') else str(color)
         settlements = []
@@ -336,10 +339,8 @@ def format_board_occupancy_data(occupancy_data: BoardOccupancyData) -> str:
     """
     lines = ["[CURRENT BOARD OCCUPANCY]"]
 
-    # Sort players by color for consistent output
-    sorted_players = sorted(occupancy_data.players, key=lambda p: p.color)
-
-    for player_data in sorted_players:
+    # Preserve seating order (as gathered) — do NOT sort alphabetically
+    for player_data in occupancy_data.players:
         color_name = player_data.color
         settlements = player_data.settlements
         cities = player_data.cities

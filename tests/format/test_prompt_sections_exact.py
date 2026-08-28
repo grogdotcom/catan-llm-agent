@@ -82,13 +82,13 @@ def test_occupancy_exact_empty_seed42():
     ps = _build_public_state(g)
     occ = gather_board_occupancy_data(ps)
     assert format_board_occupancy_data(occ) == """[CURRENT BOARD OCCUPANCY]
-- BLUE: Total: 0p
-  * (no buildings/roads)
-- ORANGE: Total: 0p
-  * (no buildings/roads)
 - RED: Total: 0p
   * (no buildings/roads)
+- BLUE: Total: 0p
+  * (no buildings/roads)
 - WHITE: Total: 0p
+  * (no buildings/roads)
+- ORANGE: Total: 0p
   * (no buildings/roads)"""
 
 
@@ -112,7 +112,7 @@ def test_occupancy_exact_deterministic():
     b.roads[(30,31)]=Color.WHITE; b.roads[(31,30)]=Color.WHITE; b.roads[(35,36)]=Color.WHITE; b.roads[(36,35)]=Color.WHITE; b.roads[(35,40)]=Color.WHITE; b.roads[(40,35)]=Color.WHITE; b.roads[(36,41)]=Color.WHITE; b.roads[(41,36)]=Color.WHITE; b.roads[(40,42)]=Color.WHITE; b.roads[(42,40)]=Color.WHITE
     ps=_build_public_state(g)
     occ=gather_board_occupancy_data(ps)
-    assert format_board_occupancy_data(occ) == '[CURRENT BOARD OCCUPANCY]\n- BLUE: Total: 37p (Wd:15, Sh:7, Wh:15)\n  * Settlements: Node 5 [11 Sh, 5 Wh, 4 Wh | 9p], Node 6 [10 Wd, 9 Sh, 2 Sh | 8p]\n  * Cities (x2): Node 15 [6 Wd, 5 Wh, 12 Wd | 10p]\n  * Roads: (5, 16), (6, 21), (20, 25), (25, 26)\n- ORANGE: Total: 25p (Sh:20, Wh:5) Ports: Sh\n  * Settlements: Node 20 [4 Wh, 9 Sh, 3 Wh | 9p]\n  * Cities (x2): Node 25 [5 Sh | 4p], Node 26 [5 Sh | 4p]\n  * Roads: (20, 21), (25, 30), (26, 31), (30, 35), (31, 36)\n- RED: Total: 52p (Wd:15, Br:18, Sh:12, Wh:3, Or:4)\n  * Settlements: Node 0 [11 Sh, 4 Wh, 9 Sh | 9p], Node 1 [11 Sh, 10 Wd, 9 Sh | 9p]\n  * Cities (x2): Node 10 [3 Br, 8 Br, 4 Wd | 10p], Node 11 [3 Br, 4 Wd, 11 Or | 7p]\n  * Roads: (0, 5), (1, 6), (10, 15), (11, 16), (15, 20), (16, 22)\n- WHITE: Total: 3p (Wd:3) Ports: 3:1\n  * Settlements: Node 30 [4 Wd | 3p]\n  * Cities (x2): Node 35 [no tiles | 0p]\n  * Roads: (30, 31), (35, 36), (35, 40), (36, 41), (40, 42)'
+    assert format_board_occupancy_data(occ) == '[CURRENT BOARD OCCUPANCY]\n- RED: Total: 52p (Wd:15, Br:18, Sh:12, Wh:3, Or:4)\n  * Settlements: Node 0 [11 Sh, 4 Wh, 9 Sh | 9p], Node 1 [11 Sh, 10 Wd, 9 Sh | 9p]\n  * Cities (x2): Node 10 [3 Br, 8 Br, 4 Wd | 10p], Node 11 [3 Br, 4 Wd, 11 Or | 7p]\n  * Roads: (0, 5), (1, 6), (10, 15), (11, 16), (15, 20), (16, 22)\n- BLUE: Total: 37p (Wd:15, Sh:7, Wh:15)\n  * Settlements: Node 5 [11 Sh, 5 Wh, 4 Wh | 9p], Node 6 [10 Wd, 9 Sh, 2 Sh | 8p]\n  * Cities (x2): Node 15 [6 Wd, 5 Wh, 12 Wd | 10p]\n  * Roads: (5, 16), (6, 21), (20, 25), (25, 26)\n- WHITE: Total: 3p (Wd:3) Ports: 3:1\n  * Settlements: Node 30 [4 Wd | 3p]\n  * Cities (x2): Node 35 [no tiles | 0p]\n  * Roads: (30, 31), (35, 36), (35, 40), (36, 41), (40, 42)\n- ORANGE: Total: 25p (Sh:20, Wh:5) Ports: Sh\n  * Settlements: Node 20 [4 Wh, 9 Sh, 3 Wh | 9p]\n  * Cities (x2): Node 25 [5 Sh | 4p], Node 26 [5 Sh | 4p]\n  * Roads: (20, 21), (25, 30), (26, 31), (30, 35), (31, 36)'
 
 
 # ---------------------------------------------------------------------------
