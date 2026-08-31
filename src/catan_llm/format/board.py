@@ -75,10 +75,12 @@ def get_full_board_map(public_state: PublicState) -> str:
     """
     Returns a formatted text representation of all 19 hexes from the public_state.
     This is static throughout the game - robber position is not included.
-    Now includes adjacent node IDs for each tile.
+    Now includes adjacent node IDs for each tile and total pips per resource.
 
     Condensed per-tile: ``T4: 5-Or(4p) [1,2,7,8,12,13]`` or ``T11: DESERT [13,14,34,35,36,37]``
     (abbreviated resources, single-letter tile prefix, pip count with ``p``).
+    Final line summarises total pips per resource, e.g.
+    ``Totals: 58p (Wd:12p, Br:10p, Sh:11p, Wh:14p, Or:11p)``.
 
     Args:
         public_state: The public state object from Observation agent containing map information
@@ -105,6 +107,10 @@ def get_full_board_map(public_state: PublicState) -> str:
     for tile_id in tile_to_nodes:
         tile_to_nodes[tile_id].sort()
 
+    # Accumulate total pips per resource for the summary line
+    resource_pips: Dict[str, int] = {"WOOD": 0, "BRICK": 0, "SHEEP": 0, "WHEAT": 0, "ORE": 0}
+    total_pips = 0
+
     # Sort tile IDs for deterministic output
     for tile_id in sorted(tiles.keys()):
         resource, roll = tiles[tile_id]
@@ -118,12 +124,32 @@ def get_full_board_map(public_state: PublicState) -> str:
             abbr = _abbr_resource(resource_name)
             pips = get_pip_count(roll)
             resource_pips_str = f"{roll}-{abbr}({pips}p)"
+            # Track totals (keys are upper-case resource names)
+            key = resource_name.upper()
+            if key in resource_pips:
+                resource_pips[key] += pips
+            else:
+                # Fallback for unexpected resource names
+                resource_pips[key] = resource_pips.get(key, 0) + pips
+            total_pips += pips
 
         # Get adjacent node IDs for this tile
         adjacent_node_ids = tile_to_nodes.get(tile_id, [])
         nodes_str = f"[{','.join(str(n) for n in adjacent_node_ids)}]" if adjacent_node_ids else "[]"
 
         lines.append(f"T{tile_id}: {resource_pips_str} {nodes_str}")
+
+    # Append per-resource pip totals line (keeps standard WOOD/BRICK/SHEEP/WHEAT/ORE order)
+    ordered_resources = ["WOOD", "BRICK", "SHEEP", "WHEAT", "ORE"]
+    # Include any non-standard resources that may have appeared
+    extra = [k for k in resource_pips.keys() if k not in ordered_resources]
+    display_order = ordered_resources + sorted(extra)
+    parts = [f"{_abbr_resource(r)}:{resource_pips[r]}p" for r in display_order if resource_pips.get(r, 0) > 0 or r in ordered_resources]
+    # Always show all standard resources even if 0p (keeps prompt stable)
+    if not parts:
+        parts = [f"{_abbr_resource(r)}:0p" for r in ordered_resources]
+    totals_str = f"Totals: {total_pips}p ({', '.join(parts)})"
+    lines.append(totals_str)
 
     return "\n".join(lines)
 
