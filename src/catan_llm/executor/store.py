@@ -507,11 +507,7 @@ class RunStore:
 
         Returns {"accepted": int, "rejected": int}
         """
-        # Lazy import — SFT owns validation
-        try:
-            from catan_llm.sft.validation import validate_response, validate_batch_response_obj
-        except ImportError:
-            from catan_llm.sft.validation import validate_response, validate_batch_response_obj  # type: ignore
+        from catan_llm.sft.validation import validate_response, validate_batch_response_obj
 
         p = Path(result_path)
         if not p.exists():
@@ -729,8 +725,3 @@ class RunStore:
                 return True
             return all(c["status"] in ("validated", "rejected", "skipped") for c in cps)
         return all(c["status"] == "validated" for c in chunks)
-
-
-# Backwards-compat alias for the rename sft→executor.
-_build_midgame_request = _build_request
-MidgameRunStore = RunStore

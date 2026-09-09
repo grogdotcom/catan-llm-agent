@@ -20,9 +20,6 @@ from typing import Any, Dict, List, Optional
 from catan_llm.executor.spec import RetryPolicy, RunSpec
 from catan_llm.executor.store import RunStore
 
-# Backwards-compat alias for tests that patch executor.runner._get_client
-MidgameRunStore = RunStore
-
 
 def _get_client(model: str, base_url: Optional[str] = None):
     try:
