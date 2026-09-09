@@ -120,15 +120,11 @@ CREATE TABLE IF NOT EXISTS checkpoints (
     seat_index INTEGER,
     checkpoint_index INTEGER,
     checkpoint_count INTEGER,
-    band INTEGER,
-    target_progress REAL,
     opportunity_id TEXT,
     strategy_in TEXT,
     strategy_source_checkpoint TEXT,
     status TEXT,
     skip_reason TEXT,
-    normalized_progress REAL,
-    selection_reason TEXT,
     FOREIGN KEY (run_id) REFERENCES runs(run_id) ON DELETE CASCADE,
     FOREIGN KEY (trajectory_id) REFERENCES trajectories(trajectory_id) ON DELETE CASCADE,
     FOREIGN KEY (opportunity_id) REFERENCES decision_opportunities(opportunity_id) ON DELETE SET NULL
@@ -163,14 +159,6 @@ CREATE TABLE IF NOT EXISTS outputs (
     rejection_reason TEXT,
     parsed_at TEXT,
     raw_output_text TEXT,
-    FOREIGN KEY (checkpoint_id) REFERENCES checkpoints(checkpoint_id) ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS dataset_membership (
-    checkpoint_id TEXT PRIMARY KEY,
-    split TEXT,
-    split_seed INTEGER,
-    export_status TEXT,
     FOREIGN KEY (checkpoint_id) REFERENCES checkpoints(checkpoint_id) ON DELETE CASCADE
 );
 """
@@ -304,7 +292,6 @@ class RunStore:
 
     def upsert_decision_opportunity(self, record: Dict[str, Any]) -> str:
         """Insert or replace a decision opportunity. Returns opportunity_id."""
-        # Build opportunity_id from trajectory + seat + turn + phase + trajectory_index
         tid = record.get("trajectory_id")
         if not tid:
             raise ValueError("record missing trajectory_id")
@@ -358,203 +345,54 @@ class RunStore:
             cur = self.conn.execute("SELECT * FROM decision_opportunities ORDER BY trajectory_id, trajectory_index")
         return [dict(r) for r in cur.fetchall()]
 
-    # -- checkpoints --
+    # -- checkpoints (generic) --
 
-    def select_checkpoints(
-        self,
-        run_id: str,
-        *,
-        phase2_strategy_map: Optional[Dict[Tuple[str, int], str]] = None,
-        sample_seed: Optional[int] = None,
-    ) -> int:
-        """High-level checkpoint selection for all sampled trajectories of a run.
+    def register_checkpoints(self, run_id: str, checkpoints: List[Dict[str, Any]]) -> int:
+        """Generic chain registration — insert generic checkpoint rows.
 
-        Steps (transactional atomic per trajectory):
-          - Load sampled trajectories: those present in trajectories table that
-            belong to run? For now we use all winner trajectories; caller should
-            have pre-inserted the sampled set only.
-          - For each (trajectory_id, seat_index) winner pair, load collapsed
-            opportunities, compute K and band selection.
-          - Persist checkpoints with strategy_in lineage.
-
-        Returns number of checkpoints created.
+        Each dict must contain:
+          checkpoint_id, trajectory_id, seat_index, checkpoint_index,
+          checkpoint_count, opportunity_id, strategy_in, strategy_source_checkpoint,
+          status, skip_reason
+        Missing keys default to None / pending.
+        Returns number inserted.
         """
-        from catan_llm.midgame.selection import (
-            collapse_opportunities,
-            filter_midgame_candidates,
-            select_checkpoints_for_trajectory,
-        )
-
-        phase2_strategy_map = phase2_strategy_map or {}
-        # Fetch all trajectories for this run: for simplicity, all trajectories in DB
-        # In a full impl we would have a run_trajectories join table; for pilot we treat
-        # stored trajectories as the sampled set.
-        trajs = self.list_trajectories()
-        # Fetch all opportunities
-        all_opps = self.list_opportunities()
-        # Group opps by (trajectory_id, seat_index)
-        from collections import defaultdict
-
-        opps_by_player: Dict[Tuple[str, int], List[Dict[str, Any]]] = defaultdict(list)
-        for o in all_opps:
-            try:
-                src = json.loads(o["source_record_json"]) if o["source_record_json"] else {}
-            except Exception:
-                src = {}
-            # Merge stored fields
-            rec = dict(src)
-            # Ensure keys
-            rec["trajectory_id"] = o["trajectory_id"]
-            rec["seat_index"] = o["seat_index"]
-            rec["color"] = o["color"]
-            rec["turn"] = o["turn"]
-            rec["phase"] = o["phase"]
-            rec["trajectory_index"] = o["trajectory_index"]
-            rec["game_id"] = o["game_id"]
-            rec["num_moves"] = o["num_moves"]
-            # normalized_progress may be in o
-            if o["normalized_progress"] is not None:
-                rec["normalized_progress"] = o["normalized_progress"]
-            else:
-                # compute
-                gid = o["trajectory_id"]
-                # need game_end_turn
-            opps_by_player[(o["trajectory_id"], int(o["seat_index"]))].append(rec)
-
         created = 0
         with self.conn:
-            for traj in trajs:
-                tid = traj["trajectory_id"]
-                winner = traj["winner"]
-                # Resolve winner seat_index
-                try:
-                    seat_order = json.loads(traj["seat_order_json"] or "[]")
-                except Exception:
-                    seat_order = []
-                winner_seat = None
-                if winner and seat_order:
-                    try:
-                        winner_seat = seat_order.index(winner)
-                    except ValueError:
-                        winner_seat = None
-                # Only winner player for pilot
-                players_to_process = []
-                if winner_seat is not None:
-                    players_to_process = [(tid, winner_seat)]
-                else:
-                    # fallback: all stored players for this traj
-                    players_to_process = [k for k in opps_by_player.keys() if k[0] == tid]
-
-                for (ptraj, pseat) in players_to_process:
-                    opps = opps_by_player.get((ptraj, pseat), [])
-                    if not opps:
-                        continue
-                    # Filter midgame candidates
-                    candidates = filter_midgame_candidates(opps)
-                    # Enrich with normalized_progress
-                    game_end_turn = int(traj.get("game_end_turn") or 60)
-                    for c in candidates:
-                        if "normalized_progress" not in c or c["normalized_progress"] is None:
-                            try:
-                                c["normalized_progress"] = float(c.get("turn", 0)) / float(game_end_turn) if game_end_turn else 0.0
-                            except Exception:
-                                c["normalized_progress"] = 0.0
-                    collapsed = collapse_opportunities(candidates)
-                    # Re-ensure normalized_progress after collapse
-                    for c in collapsed:
-                        if "normalized_progress" not in c or c["normalized_progress"] is None:
-                            c["normalized_progress"] = float(c.get("turn", 0)) / float(game_end_turn) if game_end_turn else 0.0
-
-                    selected = select_checkpoints_for_trajectory(
-                        collapsed=collapsed,
-                        game_end_turn=game_end_turn,
-                        trajectory_id=ptraj,
-                        seat_index=pseat,
-                    )
-                    # Persist each selected checkpoint with strategy lineage
-                    for idx, sel in enumerate(selected, start=1):
-                        opp = sel["opportunity"]
-                        # Find opportunity_id for this opp
-                        opp_id = None
-                        # Search stored opps for matching
-                        for stored in all_opps:
-                            if stored["trajectory_id"] == ptraj and stored["seat_index"] == pseat and stored["turn"] == opp.get("turn") and stored["phase"] == opp.get("phase"):
-                                opp_id = stored["opportunity_id"]
-                                break
-                        if opp_id is None:
-                            # fallback hash
-                            key = f"{ptraj}-{pseat}-{opp.get('turn')}-{opp.get('phase')}-{opp.get('trajectory_index')}"
-                            opp_id = _hash_bytes(key.encode())[:16]
-
-                        # Determine strategy_in and source (pure policy)
-                        from catan_llm.strategy import resolve_lineage
-
-                        prev_accepted = None
-                        prev_ckpt_id = None
-                        if idx > 1:
-                            prev_ckpt_id = f"{run_id}-{ptraj}-{pseat}-{idx-1}"
-                            cur2 = self.conn.execute("SELECT * FROM outputs WHERE checkpoint_id=?", (prev_ckpt_id,))
-                            prev_out = cur2.fetchone()
-                            if prev_out and prev_out["validation_status"] == "accepted" and prev_out["strategy_out"]:
-                                prev_accepted = prev_out["strategy_out"]
-
-                        lineage = resolve_lineage(
-                            idx,
-                            phase2_strategy=phase2_strategy_map.get((ptraj, pseat)),
-                            prev_accepted_strategy=prev_accepted,
-                            prev_checkpoint_id=prev_ckpt_id,
-                        )
-                        strategy_in = lineage.strategy_in
-                        strategy_source = lineage.strategy_source
-                        status = lineage.status
-                        skip_reason = lineage.skip_reason
-
-                        checkpoint_id = f"{run_id}-{ptraj}-{pseat}-{idx}"
-                        # If this chain already skipped, ensure we skip remaining
-                        # The next iteration will detect missing prev_out and skip
-                        self.conn.execute(
-                            """INSERT INTO checkpoints
-                               (checkpoint_id, run_id, trajectory_id, seat_index, checkpoint_index,
-                                checkpoint_count, band, target_progress, opportunity_id,
-                                strategy_in, strategy_source_checkpoint, status, skip_reason,
-                                normalized_progress, selection_reason)
-                               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                               ON CONFLICT(checkpoint_id) DO UPDATE SET
-                                 run_id=excluded.run_id,
-                                 trajectory_id=excluded.trajectory_id,
-                                 seat_index=excluded.seat_index,
-                                 checkpoint_index=excluded.checkpoint_index,
-                                 checkpoint_count=excluded.checkpoint_count,
-                                 band=excluded.band,
-                                 target_progress=excluded.target_progress,
-                                 opportunity_id=excluded.opportunity_id,
-                                 strategy_in=excluded.strategy_in,
-                                 strategy_source_checkpoint=excluded.strategy_source_checkpoint,
-                                 status=excluded.status,
-                                 skip_reason=excluded.skip_reason,
-                                 normalized_progress=excluded.normalized_progress,
-                                 selection_reason=excluded.selection_reason
-                            """,
-                            (
-                                checkpoint_id,
-                                run_id,
-                                ptraj,
-                                pseat,
-                                idx,
-                                sel["checkpoint_count"],
-                                sel["checkpoint_band"],
-                                sel["target_progress"],
-                                opp_id,
-                                strategy_in,
-                                strategy_source,
-                                status if idx == 1 or status != "pending" else status,
-                                skip_reason,
-                                sel["normalized_progress"],
-                                sel["selection_reason"],
-                            ),
-                        )
-                        created += 1
-            # Update run's current_checkpoint to 1 after selection? Keep 0 until batches advance
+            for cp in checkpoints:
+                self.conn.execute(
+                    """INSERT INTO checkpoints
+                       (checkpoint_id, run_id, trajectory_id, seat_index, checkpoint_index,
+                        checkpoint_count, opportunity_id,
+                        strategy_in, strategy_source_checkpoint, status, skip_reason)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                       ON CONFLICT(checkpoint_id) DO UPDATE SET
+                         run_id=excluded.run_id,
+                         trajectory_id=excluded.trajectory_id,
+                         seat_index=excluded.seat_index,
+                         checkpoint_index=excluded.checkpoint_index,
+                         checkpoint_count=excluded.checkpoint_count,
+                         opportunity_id=excluded.opportunity_id,
+                         strategy_in=excluded.strategy_in,
+                         strategy_source_checkpoint=excluded.strategy_source_checkpoint,
+                         status=excluded.status,
+                         skip_reason=excluded.skip_reason
+                    """,
+                    (
+                        cp["checkpoint_id"],
+                        run_id,
+                        cp.get("trajectory_id"),
+                        cp.get("seat_index"),
+                        cp.get("checkpoint_index"),
+                        cp.get("checkpoint_count"),
+                        cp.get("opportunity_id"),
+                        cp.get("strategy_in"),
+                        cp.get("strategy_source_checkpoint"),
+                        cp.get("status", "pending"),
+                        cp.get("skip_reason"),
+                    ),
+                )
+                created += 1
         return created
 
     def list_checkpoints(self, run_id: str, checkpoint_index: Optional[int] = None) -> List[Dict[str, Any]]:
@@ -612,8 +450,6 @@ class RunStore:
                 dir_path.mkdir(parents=True, exist_ok=True)
                 request_path = str(dir_path / f"ckpt{checkpoint_index}_chunk{idx}.batch.jsonl")
                 # Build file content
-                # Each checkpoint's prompt: need to inject [CURRENT STRATEGY] strategy_in
-                # Load opportunity prompt
                 lines = []
                 for cp in chunk:
                     opp_id = cp["opportunity_id"]
@@ -671,7 +507,11 @@ class RunStore:
 
         Returns {"accepted": int, "rejected": int}
         """
-        from catan_llm.midgame.validation import validate_response, validate_batch_response_obj
+        # Lazy import — SFT owns validation
+        try:
+            from catan_llm.sft.validation import validate_response, validate_batch_response_obj
+        except ImportError:
+            from catan_llm.sft.validation import validate_response, validate_batch_response_obj  # type: ignore
 
         p = Path(result_path)
         if not p.exists():
@@ -720,7 +560,6 @@ class RunStore:
                         (custom_id, result_path, result_hash, "rejected", reason, _now(), json.dumps(obj, ensure_ascii=False)),
                     )
                     rejected += 1
-                    # Do not contaminate chain; checkpoint stays rejected
                     continue
 
                 # Extract text from batch response body (unified helper)
@@ -730,8 +569,6 @@ class RunStore:
                 body = resp.get("body", resp)
                 text = extract_text_from_batch_body(body) if isinstance(body, dict) else ""
                 if not text and isinstance(obj, dict):
-                    from catan_llm.teacher.parsing import extract_text_from_batch_body
-
                     text = extract_text_from_batch_body(obj)
 
                 # Load prompt for validation (need engine completion etc)
@@ -740,11 +577,7 @@ class RunStore:
                 opp_row = cur3.fetchone()
                 engine_completion = opp_row["engine_completion"] if opp_row else ""
                 num_moves = opp_row["num_moves"] if opp_row and opp_row["num_moves"] else None
-                # Reconstruct prompt with injected strategy (as sent)
-                # For validation of strategy block count, we need to reconstruct prompt actually sent
-                # Use same injection logic as create_batch_chunks: retrieve stored strategy_in
                 strategy_in = cp["strategy_in"]
-                # Reconstruct prompt exactly as sent (deterministic helper)
                 try:
                     src = json.loads(opp_row["source_record_json"] or "{}") if opp_row else {}
                 except Exception:
@@ -757,7 +590,7 @@ class RunStore:
                     engine_completion=engine_completion,
                     num_moves=num_moves,
                     strategy_in=strategy_in,
-                    strategy_lineage_ok=True,  # lineage already ensured via selection; invalid chains are skipped and not in pending
+                    strategy_lineage_ok=True,
                 )
                 if v.accepted:
                     self.conn.execute(
@@ -788,7 +621,6 @@ class RunStore:
                             text,
                         ),
                     )
-                    # Also update checkpoint status to validated? keep pending->validated?
                     self.conn.execute("UPDATE checkpoints SET status=? WHERE checkpoint_id=?", ("validated", custom_id))
                     accepted += 1
                 else:
@@ -820,7 +652,6 @@ class RunStore:
                             text,
                         ),
                     )
-                    # Mark checkpoint as rejected
                     self.conn.execute("UPDATE checkpoints SET status=? WHERE checkpoint_id=?", ("rejected", custom_id))
                     rejected += 1
 
@@ -845,7 +676,6 @@ class RunStore:
         next_epoch = current + 1 if current else 1
         # Check if there are chunks for next_epoch
         chunks = self.pending_batch_chunks(run_id, next_epoch)
-        # If no chunks, maybe already completed or no checkpoints for that epoch
         # Determine max checkpoint index for run
         cur = self.conn.execute("SELECT MAX(checkpoint_index) as mx FROM checkpoints WHERE run_id=?", (run_id,))
         mx_row = cur.fetchone()
@@ -862,21 +692,13 @@ class RunStore:
             pass
 
         # Propagate strategy to next epoch's pending checkpoints where needed
-        # Next epoch's checkpoints currently have strategy_in = None for idx>1 if previous was not yet accepted
-        # We need to fill them based on previous outputs
         with self.conn:
-            # Fetch next epoch checkpoints that are pending but missing strategy_in
             nxt_cps = self.list_checkpoints(run_id, checkpoint_index=next_epoch)
-            # They should already have strategy_in via initial selection for epoch1, but for epoch>1 they need previous accepted
-            # Actually select_checkpoints already set strategy_in based on prior outputs available at selection time;
-            # for sequential epochs, we need to update epoch N+1's strategy_in now that N is validated
             if next_epoch + 1 <= max_idx:
                 future_cps = self.list_checkpoints(run_id, checkpoint_index=next_epoch + 1)
                 for fc in future_cps:
-                    # Allow reviving broken lineage: if previously skipped due to missing predecessor, try again
                     if fc["strategy_in"] is not None and fc["status"] != "skipped":
                         continue
-                    # If status is pending but already has strategy_in, keep
                     if fc["strategy_in"] is not None and fc["status"] == "pending":
                         continue
                     # Find source checkpoint (same trajectory/seat, index = future-1)
@@ -905,95 +727,10 @@ class RunStore:
             cps = self.list_checkpoints(run_id, checkpoint_index=checkpoint_index)
             if not cps:
                 return True
-            # If all are skipped or validated/rejected, considered validated
             return all(c["status"] in ("validated", "rejected", "skipped") for c in cps)
         return all(c["status"] == "validated" for c in chunks)
 
-    # -- dataset membership / export --
 
-    def assign_splits(self, run_id: str, split_seed: int = 42) -> None:
-        """Assign 80/10/10 splits to accepted checkpoints."""
-        import random
-
-        rng = random.Random(split_seed)
-        cps = self.list_checkpoints(run_id)
-        accepted_ids = []
-        for cp in cps:
-            cur = self.conn.execute("SELECT validation_status FROM outputs WHERE checkpoint_id=?", (cp["checkpoint_id"],))
-            row = cur.fetchone()
-            if row and row["validation_status"] == "accepted":
-                accepted_ids.append(cp["checkpoint_id"])
-        rng.shuffle(accepted_ids)
-        n = len(accepted_ids)
-        n_train = int(n * 0.8)
-        n_val = int(n * 0.1)
-        # remaining goes to test
-        with self.conn:
-            for idx, cid in enumerate(accepted_ids):
-                if idx < n_train:
-                    split = "train"
-                elif idx < n_train + n_val:
-                    split = "validation"
-                else:
-                    split = "test"
-                self.conn.execute(
-                    """INSERT INTO dataset_membership (checkpoint_id, split, split_seed, export_status)
-                       VALUES (?,?,?,?)
-                       ON CONFLICT(checkpoint_id) DO UPDATE SET split=excluded.split, split_seed=excluded.split_seed
-                    """,
-                    (cid, split, split_seed, "pending"),
-                )
-
-    def export_dataset(self, run_id: str, output_path: str, split_seed: int = 42) -> Dict[str, int]:
-        """Export accepted full-reasoning SFT JSONL records. Preserves raw teacher output etc. §8 & §12.
-
-        Returns counts.
-        """
-        self.assign_splits(run_id, split_seed=split_seed)
-        cps = self.list_checkpoints(run_id)
-        from catan_llm.dataset import build_sft_record
-
-        out_p = Path(output_path)
-        out_p.parent.mkdir(parents=True, exist_ok=True)
-        counts = {"train": 0, "validation": 0, "test": 0, "total": 0}
-        with out_p.open("w", encoding="utf-8") as f, self.conn:
-            for cp in cps:
-                # Only accepted
-                cur = self.conn.execute("SELECT * FROM outputs WHERE checkpoint_id=?", (cp["checkpoint_id"],))
-                out = cur.fetchone()
-                if not out or out["validation_status"] != "accepted":
-                    continue
-                cur2 = self.conn.execute("SELECT * FROM dataset_membership WHERE checkpoint_id=?", (cp["checkpoint_id"],))
-                mem = cur2.fetchone()
-                split = mem["split"] if mem else "train"
-                # Load opportunity details
-                cur3 = self.conn.execute("SELECT * FROM decision_opportunities WHERE opportunity_id=?", (cp["opportunity_id"],))
-                opp = cur3.fetchone()
-                try:
-                    src = json.loads(opp["source_record_json"] or "{}") if opp else {}
-                except Exception:
-                    src = {}
-                prompt_with_strategy = _prompt_with_strategy(src.get("prompt", ""), cp.get("strategy_in") or "None")
-                traj = self.conn.execute("SELECT * FROM trajectories WHERE trajectory_id=?", (cp["trajectory_id"],)).fetchone()
-
-                record = build_sft_record(
-                    checkpoint=dict(cp),
-                    output=dict(out),
-                    opportunity=dict(opp) if opp else None,
-                    trajectory=dict(traj) if traj else None,
-                    prompt=prompt_with_strategy,
-                    split=split,
-                    split_seed=split_seed,
-                    run_id=run_id,
-                )
-                f.write(json.dumps(record, ensure_ascii=False) + "\n")
-                counts[split] = counts.get(split, 0) + 1
-                counts["total"] += 1
-                # Update export status
-                self.conn.execute("UPDATE dataset_membership SET export_status=? WHERE checkpoint_id=?", ("exported", cp["checkpoint_id"]))
-        return counts
-
-
-# Backwards-compat alias for the rename midgame→executor (commit 1 keeps midgame delegating).
+# Backwards-compat alias for the rename sft→executor.
 _build_midgame_request = _build_request
 MidgameRunStore = RunStore

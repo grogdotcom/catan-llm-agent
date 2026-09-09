@@ -3,6 +3,18 @@ Catanatron LLM - LLM-friendly formatting for Catanatron game states
 
 Now works with Observation agent's public_state, features, and inventory instead of
 direct Game/State access for better information hiding.
+
+Deep module layout (see AGENTS.md):
+  - catan_llm.domain      — shared records (DecisionRecord, Trajectory, ...)
+  - catan_llm.decision    — decision surface (present/resolve/execute moves)
+  - catan_llm.prompt      — canonical prompt builder + strategy block handling
+  - catan_llm.teacher     — unified batch/inference transport + parsing
+  - catan_llm.strategy    — strategy-chain lineage policy
+  - catan_llm.dataset     — accepted SFT export record construction
+  - catan_llm.evaluation  — offline metrics + run reporting
+  - catan_llm.executor    — generic durable executor (store/runner/spec)
+  - catan_llm.sft         — SFT checkpoint pipeline (selection/validation/provenance/cli + side table)
+  - catan_llm.openai_batch — facade + CLI over catan_llm.teacher
 """
 
 from catan_llm.format import (

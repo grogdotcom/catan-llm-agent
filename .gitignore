@@ -1,3 +1,4 @@
+.env
 venv/
 __pycache__/
 *.pyc
@@ -11,3 +12,15 @@ htmlcov/
 coverage.xml
 *.cover
 .hypothesis/
+
+# sft ephemeral artifacts — regenerated via SQLite run store
+data/sft/batches/
+data/sft/results/
+data/sft/sft/
+data/sft/*.db
+data/sft/*.db-journal
+data/executor/batches/
+data/executor/results/
+data/executor/*.db
+data/executor/*.db-journal
+*.db

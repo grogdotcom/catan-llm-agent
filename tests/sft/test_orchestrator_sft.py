@@ -5,9 +5,10 @@ import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from catan_llm.midgame.store import MidgameRunStore
-from catan_llm.midgame.orchestrator import prepare_epoch, submit_epoch, resume_run
-from catan_llm.midgame.provenance import derive_trajectory_id
+from catan_llm.executor.store import RunStore as MidgameRunStore
+from catan_llm.sft.side_table import select_checkpoints as sft_select_checkpoints, export_dataset as sft_export_dataset
+from catan_llm.executor.runner import prepare_epoch, submit_epoch, resume_run
+from catan_llm.sft.provenance import derive_trajectory_id
 
 
 def _make_trajectory(game_id, winner, seed=1000, end=72):
@@ -50,7 +51,7 @@ def test_prepare_creates_chunks_without_api():
     store.upsert_trajectory(traj)
     for i, turn in enumerate([5, 15, 30, 45, 60]):
         store.upsert_decision_opportunity(_make_rec(traj["trajectory_id"], 1, turn, "PLAY_TURN", 0, traj_idx=i, color="BLUE"))
-    store.select_checkpoints(run_id, phase2_strategy_map={(traj["trajectory_id"], 1): "init"})
+    sft_select_checkpoints(store, run_id, phase2_strategy_map={(traj["trajectory_id"], 1): "init"})
     with tempfile.TemporaryDirectory() as tmp:
         ids = prepare_epoch(store, run_id, 1, chunk_size=100, request_dir=tmp)
         assert len(ids) == 1
@@ -77,7 +78,7 @@ def test_submit_dry_run_when_no_key():
     store.upsert_trajectory(traj)
     for i, turn in enumerate([5, 15, 30]):
         store.upsert_decision_opportunity(_make_rec(traj["trajectory_id"], 0, turn, "PLAY_TURN", 0, traj_idx=i, color="RED"))
-    store.select_checkpoints(run_id, phase2_strategy_map={(traj["trajectory_id"], 0): "s"})
+    sft_select_checkpoints(store, run_id, phase2_strategy_map={(traj["trajectory_id"], 0): "s"})
     with tempfile.TemporaryDirectory() as tmp:
         # Ensure no API key
         with patch.dict("os.environ", {}, clear=False):
@@ -96,7 +97,7 @@ def test_submit_records_batch_ids_and_resume_no_duplicates():
     store.upsert_trajectory(traj)
     for i, turn in enumerate([5, 15, 30]):
         store.upsert_decision_opportunity(_make_rec(traj["trajectory_id"], 1, turn, "PLAY_TURN", 0, traj_idx=i, color="BLUE"))
-    store.select_checkpoints(run_id, phase2_strategy_map={(traj["trajectory_id"], 1): "init"})
+    sft_select_checkpoints(store, run_id, phase2_strategy_map={(traj["trajectory_id"], 1): "init"})
     with tempfile.TemporaryDirectory() as tmp:
         # Prepare
         ids = prepare_epoch(store, run_id, 1, request_dir=tmp)
@@ -125,7 +126,7 @@ def test_export_preserves_raw_and_metadata():
     store.upsert_trajectory(traj)
     for i, turn in enumerate([10, 30, 50]):
         store.upsert_decision_opportunity(_make_rec(traj["trajectory_id"], 2, turn, "PLAY_TURN", 0, traj_idx=i, color="ORANGE"))
-    store.select_checkpoints(run_id, phase2_strategy_map={(traj["trajectory_id"], 2): "bootstrap"})
+    sft_select_checkpoints(store, run_id, phase2_strategy_map={(traj["trajectory_id"], 2): "bootstrap"})
     cps = store.list_checkpoints(run_id, checkpoint_index=1)
     assert cps[0]["strategy_in"] == "bootstrap"
     # Simulate accepted output
@@ -137,7 +138,7 @@ def test_export_preserves_raw_and_metadata():
         result_path.write_text(json.dumps(line) + "\n")
         store.import_batch_results(chunk_ids[0], str(result_path))
         out_path = Path(tmp) / "export.jsonl"
-        store.export_dataset(run_id, str(out_path), split_seed=99)
+        sft_export_dataset(store, run_id, str(out_path), split_seed=99)
         exported = json.loads(out_path.read_text().splitlines()[0])
         assert exported["raw_output_text"] == "<think>reason</think><strategy>out strat</strategy><action>1</action>"
         assert exported["strategy_in"] == "bootstrap"

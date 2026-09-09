@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Optional
 from catan_llm.executor.spec import RetryPolicy, RunSpec
 from catan_llm.executor.store import RunStore
 
-# Backwards-compat alias for tests that patch catan_llm.midgame.orchestrator._get_client
+# Backwards-compat alias for tests that patch executor.runner._get_client
 MidgameRunStore = RunStore
 
 
@@ -107,7 +107,7 @@ def submit_epoch(
         req_path = row["request_path"]
         # Use OpenAI Batch via files + batches
         file_id = client.upload_file(req_path)
-        batch = client.create_batch(file_id, endpoint="/v1/responses", completion_window="24h", metadata={"midgame_run_id": run_id, "checkpoint_index": str(checkpoint_index)})
+        batch = client.create_batch(file_id, endpoint="/v1/responses", completion_window="24h", metadata={"run_id": run_id, "checkpoint_index": str(checkpoint_index)})
         batch_id = getattr(batch, "id", batch.get("id") if isinstance(batch, dict) else str(batch))
         store.record_batch_submission(cid, batch_id)
         return batch_id

@@ -507,7 +507,39 @@ def _write_jsonl(path: str, records: List[Dict[str, Any]]):
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
 
 
-def run_simulation(num_games=1000, output_file="high_decision_moves.jsonl"):
+def _derive_trajectory_provenance(
+    *,
+    game_id: int,
+    game_seed: int,
+    seat_order: List[str],
+    winner_color: Optional[Color],
+    num_turns: int,
+) -> Dict[str, Any]:
+    """Build trajectory provenance dict for a finished game."""
+    import hashlib
+
+    seat_str = "-".join(seat_order)
+    h = hashlib.sha256(f"{game_seed}-{seat_str}".encode()).hexdigest()[:12]
+    trajectory_id = f"seed-{game_seed}-{h}"
+    winner_name = getattr(winner_color, "name", str(winner_color)) if winner_color is not None else None
+    # Map color -> seat_index
+    color_to_seat = {c: i for i, c in enumerate(seat_order)}
+    return {
+        "trajectory_id": trajectory_id,
+        "game_seed": game_seed,
+        "game_end_turn": num_turns,
+        "seat_order": seat_order,
+        "winner": winner_name,
+        "color_to_seat": color_to_seat,
+    }
+
+
+def run_simulation(
+    num_games=1000,
+    output_file="data/sft/high_decision_moves.jsonl",
+    base_seed: int = 1000,
+    manifest_path: Optional[str] = None,
+):
     """Run AlphaBeta self-play and collect high-decision prompts to JSONL.
 
     Uses ``prunning=False`` and ``friendly_robber=False`` so robber moves
@@ -517,14 +549,31 @@ def run_simulation(num_games=1000, output_file="high_decision_moves.jsonl"):
     record had ``num_moves == 1`` and ``completion == "1"`` (no learning
     signal).
 
+    Each record is annotated with trajectory provenance (``trajectory_id``,
+    ``game_seed``, ``game_end_turn``, ``seat_index``, ``trajectory_index``)
+    and the run also emits a trajectory manifest JSONL.
+
     Args:
         num_games: Number of games to simulate.
         output_file: Path to JSONL output. Each line is a full prompt record
             with ``prompt`` (six-section via build_full_prompt), ``completion``
             (1-indexed chosen move), and metadata. Overwritten incrementally
             every 10 games and at the end.
+        base_seed: Base seed; game i uses ``base_seed + i`` as game_seed.
+        manifest_path: Optional path for trajectory manifest JSONL (defaults to
+            ``<output_dir>/trajectory_manifest.jsonl``).
     """
     all_high_decisions: List[Dict[str, Any]] = []
+    seat_order = ["RED", "BLUE", "ORANGE", "WHITE"]
+    manifests: List[Dict[str, Any]] = []
+    # Determine manifest path
+    if manifest_path is None:
+        try:
+            from pathlib import Path as _P
+
+            manifest_path = str(_P(output_file).parent / "trajectory_manifest.jsonl")
+        except Exception:
+            manifest_path = None
 
     player_instances = [
         CorpusCollectionPlayer(Color.RED, prunning=False),
@@ -536,23 +585,74 @@ def run_simulation(num_games=1000, output_file="high_decision_moves.jsonl"):
     for i in range(num_games):
         for p in player_instances:
             p.reset_state()
-
+        game_seed = base_seed + i
         accumulator = CorpusAccumulator(player_instances, game_id=i)
-        game = Game(player_instances, friendly_robber=False)
+        game = Game(player_instances, seed=game_seed, friendly_robber=False)
         game.play(accumulators=[accumulator])
 
+        # Derive provenance from finished game
+        num_turns = getattr(game.state, "num_turns", None)
+        if num_turns is None:
+            num_turns = getattr(game.state, "current_turn_index", 0) or 0
+        winner_color = game.winning_color()
+        prov = _derive_trajectory_provenance(
+            game_id=i,
+            game_seed=game_seed,
+            seat_order=seat_order,
+            winner_color=winner_color,
+            num_turns=int(num_turns),
+        )
+        # Build manifest entry
+        manifest = {
+            "trajectory_id": prov["trajectory_id"],
+            "game_seed": prov["game_seed"],
+            "game_end_turn": prov["game_end_turn"],
+            "game_id": i,
+            "seat_order": seat_order,
+            "winner": prov["winner"],
+            "players": [
+                {"seat_index": idx, "color": c, "is_winner": 1 if c == prov["winner"] else 0}
+                for idx, c in enumerate(seat_order)
+            ],
+        }
+        manifests.append(manifest)
+
+        # Annotate each corpus record with provenance
+        for idx, rec in enumerate(accumulator.corpus):
+            # rec["game_id"] already equals i; keep but ensure
+            color = rec.get("color", "RED")
+            seat_index = prov["color_to_seat"].get(color, 0)
+            # trajectory_index is global order within trajectory (decision_id mirrors it but use idx)
+            rec["trajectory_id"] = prov["trajectory_id"]
+            rec["game_seed"] = prov["game_seed"]
+            rec["game_end_turn"] = prov["game_end_turn"]
+            rec["seat_index"] = seat_index
+            rec["trajectory_index"] = idx
+            # Ensure winner consistent
+            rec["winner"] = prov["winner"]
         all_high_decisions.extend(accumulator.corpus)
         print(f"Game {i+1}/{num_games} finished. Total high decisions collected: {len(all_high_decisions)}")
 
         # Intermediate saves (JSONL)
         if (i + 1) % 10 == 0 or i == 0:
             _write_jsonl(output_file, all_high_decisions)
+            if manifest_path:
+                _write_jsonl(manifest_path, manifests)
 
     _write_jsonl(output_file, all_high_decisions)
+    if manifest_path:
+        _write_jsonl(manifest_path, manifests)
     print(f"Finished. Saved {len(all_high_decisions)} moves to {output_file} (JSONL, one record per line)")
+    if manifest_path:
+        print(f"Wrote trajectory manifest to {manifest_path} ({len(manifests)} trajectories)")
 
 
-def run_placements_simulation(num_games=1000, output_file="initial_placements.jsonl"):
+def run_placements_simulation(
+    num_games=1000,
+    output_file="data/initial_placements/raw/initial_placements.jsonl",
+    base_seed: int = 2000,
+    manifest_path: Optional[str] = None,
+):
     """Run AlphaBeta self-play and collect *only* initial placements.
 
     Unlike :func:`run_simulation`, this emits every initial-placement decision
@@ -574,14 +674,57 @@ def run_placements_simulation(num_games=1000, output_file="initial_placements.js
         CorpusCollectionPlayer(Color.WHITE, prunning=False),
     ]
 
+    seat_order = ["RED", "BLUE", "ORANGE", "WHITE"]
+    manifests: List[Dict[str, Any]] = []
+    if manifest_path is None:
+        try:
+            from pathlib import Path as _P
+
+            manifest_path = str(_P(output_file).parent / "trajectory_manifest.jsonl")
+        except Exception:
+            manifest_path = None
+
     for i in range(num_games):
         for p in player_instances:
             p.reset_state()
-
+        game_seed = base_seed + i
         accumulator = PlacementsAccumulator(player_instances, game_id=i)
-        game = Game(player_instances, friendly_robber=False)
+        game = Game(player_instances, seed=game_seed, friendly_robber=False)
         game.play(accumulators=[accumulator])
 
+        num_turns = getattr(game.state, "num_turns", None)
+        if num_turns is None:
+            num_turns = getattr(game.state, "current_turn_index", 0) or 0
+        winner_color = game.winning_color()
+        prov = _derive_trajectory_provenance(
+            game_id=i,
+            game_seed=game_seed,
+            seat_order=seat_order,
+            winner_color=winner_color,
+            num_turns=int(num_turns),
+        )
+        manifest = {
+            "trajectory_id": prov["trajectory_id"],
+            "game_seed": prov["game_seed"],
+            "game_end_turn": prov["game_end_turn"],
+            "game_id": i,
+            "seat_order": seat_order,
+            "winner": prov["winner"],
+            "players": [
+                {"seat_index": idx, "color": c, "is_winner": 1 if c == prov["winner"] else 0}
+                for idx, c in enumerate(seat_order)
+            ],
+        }
+        manifests.append(manifest)
+        for idx, rec in enumerate(accumulator.corpus):
+            color = rec.get("color", "RED")
+            seat_index = prov["color_to_seat"].get(color, 0)
+            rec["trajectory_id"] = prov["trajectory_id"]
+            rec["game_seed"] = prov["game_seed"]
+            rec["game_end_turn"] = prov["game_end_turn"]
+            rec["seat_index"] = seat_index
+            rec["trajectory_index"] = idx
+            rec["winner"] = prov["winner"]
         all_placements.extend(accumulator.corpus)
         print(
             f"Game {i+1}/{num_games} finished. "
@@ -591,9 +734,15 @@ def run_placements_simulation(num_games=1000, output_file="initial_placements.js
 
         if (i + 1) % 10 == 0 or i == 0:
             _write_jsonl(output_file, all_placements)
+            if manifest_path:
+                _write_jsonl(manifest_path, manifests)
 
     _write_jsonl(output_file, all_placements)
+    if manifest_path:
+        _write_jsonl(manifest_path, manifests)
     print(f"Finished. Saved {len(all_placements)} placements to {output_file} (JSONL, one record per line)")
+    if manifest_path:
+        print(f"Wrote trajectory manifest to {manifest_path} ({len(manifests)} trajectories)")
 
 
 if __name__ == "__main__":
@@ -603,7 +752,7 @@ if __name__ == "__main__":
         description="Collect high-decision prompts via LLMObservationAgent.build_full_prompt to JSONL"
     )
     parser.add_argument("num_games", nargs="?", type=int, default=1000, help="Number of games to simulate")
-    parser.add_argument("output_file", nargs="?", default="high_decision_moves.jsonl", help="Output JSONL path")
+    parser.add_argument("output_file", nargs="?", default="data/sft/high_decision_moves.jsonl", help="Output JSONL path")
     parser.add_argument("-n", "--num-games", type=int, dest="num_games_flag", help="Number of games (flag form)")
     parser.add_argument("-o", "--output", "--out", type=str, dest="output_flag", help="Output JSONL path (flag form)")
     parser.add_argument(
@@ -619,10 +768,10 @@ if __name__ == "__main__":
     n = args.num_games_flag if args.num_games_flag is not None else args.num_games
     out = args.output_flag if args.output_flag is not None else args.output_file
     placements_mode = bool(getattr(args, "placements", False))
-    # Default placements output is initial_placements.jsonl when --placements is set
+    # Default placements output is data/initial_placements/raw/initial_placements.jsonl when --placements is set
     # and the user didn't explicitly choose an output path.
-    if placements_mode and args.output_flag is None and args.output_file == "high_decision_moves.jsonl":
-        out = "initial_placements.jsonl"
+    if placements_mode and args.output_flag is None and args.output_file == "data/sft/high_decision_moves.jsonl":
+        out = "data/initial_placements/raw/initial_placements.jsonl"
 
     # Handle swapped args: `script out.jsonl 100` case
     if isinstance(n, str) and n.endswith(".jsonl"):
