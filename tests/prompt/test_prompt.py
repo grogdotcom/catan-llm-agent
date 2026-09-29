@@ -14,8 +14,7 @@ from catan_llm.llm.prompt import PromptBuilder, ensure_strategy_block, inject_st
 def _pub_state():
     class S(Player):
         def __init__(self, c):
-            self.color = c
-            self.is_bot = True
+            super().__init__(c)
 
         def decide(self, g, a):
             return a[0]

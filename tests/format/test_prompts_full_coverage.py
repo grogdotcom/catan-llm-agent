@@ -36,8 +36,7 @@ from catan_llm.format.players import get_players_summary
 
 class S(Player):
     def __init__(self, c):
-        self.color = c
-        self.is_bot = True
+        super().__init__(c)
     def decide(self, g, a):
         return a[0] if a else None
     def reset_state(self):

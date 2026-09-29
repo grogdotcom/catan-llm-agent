@@ -391,7 +391,7 @@ def test_longest_road_claim_exact():
     random.seed(0)
     # Use Game to get a real board with STATIC_GRAPH
     class Dummy(Player):
-        def __init__(self, c): self.color=c; self.is_bot=True
+        def __init__(self, c): super().__init__(c)
         def decide(self, g, a): return a[0]
         def reset_state(self): pass
     game = Game([Dummy(Color.RED), Dummy(Color.BLUE), Dummy(Color.ORANGE), Dummy(Color.WHITE)], seed=11)
@@ -584,7 +584,7 @@ def test_build_moves_play_road_building_simple_exact():
     import random
     random.seed(1)
     class Dummy(Player):
-        def __init__(self, c): self.color=c; self.is_bot=True
+        def __init__(self, c): super().__init__(c)
         def decide(self,g,a): return a[0]
         def reset_state(self): pass
     game = Game([Dummy(Color.RED), Dummy(Color.BLUE), Dummy(Color.ORANGE), Dummy(Color.WHITE)], seed=1)

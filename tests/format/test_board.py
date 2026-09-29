@@ -36,8 +36,7 @@ def build_public_state(game):
 class SimplePlayer(Player):
     """Simple player for testing that doesn't need to implement decide"""
     def __init__(self, color):
-        self.color = color
-        self.is_bot = True
+        super().__init__(color)
 
     def decide(self, game, playable_actions):
         return playable_actions[0] if playable_actions else None

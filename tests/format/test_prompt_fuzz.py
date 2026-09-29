@@ -30,8 +30,7 @@ from catan_llm.format.utils import _name_of
 
 class S(Player):
     def __init__(self, c):
-        self.color = c
-        self.is_bot = True
+        super().__init__(c)
     def decide(self, g, a):
         return a[0]
     def reset_state(self):

@@ -262,8 +262,7 @@ def _enriched_ps(seed=42):
 
     class _P(Player):
         def __init__(self, color):
-            self.color = color
-            self.is_bot = True
+            super().__init__(color)
         def decide(self, game, playable_actions):
             return playable_actions[0] if playable_actions else None
         def reset_state(self):
@@ -502,8 +501,7 @@ from catanatron.models.perspective_player import _build_public_state, _sanitize_
 
 class SimplePlayer(Player):
     def __init__(self, color):
-        self.color = color
-        self.is_bot = True
+        super().__init__(color)
     def decide(self, game, playable_actions):
         return playable_actions[0] if playable_actions else None
     def reset_state(self):

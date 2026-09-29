@@ -35,7 +35,7 @@ from catan_llm.format.moves import build_moves, format_moves
 from catan_llm.format.prompts import get_complete_prompt
 
 class S(Player):
-    def __init__(self, c): self.color=c; self.is_bot=True
+    def __init__(self, c): super().__init__(c)
     def decide(self,g,a): return a[0]
     def reset_state(self): pass
 

@@ -51,8 +51,7 @@ from catan_llm.format.prompts import (
 
 class SimplePlayer(Player):
     def __init__(self, color):
-        self.color = color
-        self.is_bot = True
+        super().__init__(color)
 
     def decide(self, game, playable_actions):
         return playable_actions[0] if playable_actions else None

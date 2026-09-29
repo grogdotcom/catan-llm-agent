@@ -56,7 +56,7 @@ def test_llm_agent_build_full_prompt_inventory_fallback():
     from catanatron.models.player import Player
     import random
     class S(Player):
-        def __init__(self,c): self.color=c; self.is_bot=True
+        def __init__(self,c): super().__init__(c)
         def decide(self,g,a): return a[0]
         def reset_state(self): pass
     random.seed(42)
