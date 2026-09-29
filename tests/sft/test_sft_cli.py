@@ -4,8 +4,8 @@ import argparse
 import json
 from pathlib import Path
 
-from catan_llm.sft import cli
-from catan_llm.sft.provenance import derive_trajectory_id
+from catan_llm.llm.sft import cli
+from catan_llm.llm.sft.provenance import derive_trajectory_id
 
 
 def _corpus(tmp_path, n_games=2, per_game=6):

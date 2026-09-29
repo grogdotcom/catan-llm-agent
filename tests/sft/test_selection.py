@@ -2,7 +2,7 @@
 
 import json
 
-from catan_llm.sft.selection import (
+from catan_llm.llm.sft.selection import (
     checkpoint_count_for_length,
     collapse_opportunities,
     select_checkpoints_for_trajectory,
@@ -123,7 +123,7 @@ def test_normalized_progress_computed():
 
 
 def test_filter_initial_placement_excluded():
-    from catan_llm.sft.selection import filter_midgame_candidates
+    from catan_llm.llm.sft.selection import filter_midgame_candidates
 
     recs = [_make_rec(phase="BUILD_INITIAL_SETTLEMENT"), _make_rec(phase="PLAY_TURN")]
     filtered = filter_midgame_candidates(recs)

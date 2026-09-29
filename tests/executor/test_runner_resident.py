@@ -6,7 +6,7 @@ import tempfile
 from catan_llm.executor.runner import RunExecutor
 from catan_llm.executor.spec import RunSpec, RetryPolicy
 from catan_llm.executor.store import RunStore
-from catan_llm.sft.provenance import derive_trajectory_id
+from catan_llm.llm.sft.provenance import derive_trajectory_id
 
 
 def _traj(gid=0):

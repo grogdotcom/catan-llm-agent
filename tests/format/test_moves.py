@@ -48,7 +48,7 @@ from catan_llm.format.moves import (
     parse_move,
     pick_auto_road,
 )
-from catan_llm.llm_agent import LLMObservationAgent, MoveExecutor
+from catan_llm.llm.agent import LLMObservationAgent, MoveExecutor
 
 
 class SimplePlayer(Player):

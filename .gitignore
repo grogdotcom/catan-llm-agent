@@ -13,6 +13,9 @@ coverage.xml
 *.cover
 .hypothesis/
 
+# opencode sequential (100-game muse-spark, resumable, not committed)
+data/opencode_sequential/
+
 # sft ephemeral artifacts — regenerated via SQLite run store
 data/sft/batches/
 data/sft/results/
@@ -24,3 +27,4 @@ data/executor/results/
 data/executor/*.db
 data/executor/*.db-journal
 *.db
+data/opencode_midgame/

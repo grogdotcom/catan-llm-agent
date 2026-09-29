@@ -25,7 +25,7 @@ coverage-check:
 		--cov=src/catan_llm/format \
 		--cov-report=term-missing \
 		--cov-fail-under=80
-	$(PY) -m pytest tests/format \
+	$(PY) -m pytest \
 		--cov=src/catan_llm \
 		--cov-report=term-missing \
 		--cov-fail-under=80

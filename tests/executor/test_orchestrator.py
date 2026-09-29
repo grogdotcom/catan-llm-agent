@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 from catan_llm.executor.store import RunStore as MidgameRunStore
 from catan_llm.executor.runner import prepare_epoch, submit_epoch, resume_run
-from catan_llm.sft.provenance import derive_trajectory_id
+from catan_llm.llm.sft.provenance import derive_trajectory_id
 
 
 def _make_trajectory(game_id, winner, seed=1000, end=72):
@@ -128,7 +128,7 @@ def test_submit_records_batch_ids_and_resume_no_duplicates():
 
 def test_export_via_sft_side_table():
     # generic executor does not have export; test SFT side table instead via direct call
-    from catan_llm.sft.side_table import select_checkpoints as sft_select, export_dataset as sft_export, ensure_sft_tables
+    from catan_llm.llm.sft.side_table import select_checkpoints as sft_select, export_dataset as sft_export, ensure_sft_tables
     store = MidgameRunStore(":memory:")
     ensure_sft_tables(store.conn)
     run_id = store.create_run({})

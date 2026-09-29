@@ -5,7 +5,7 @@ import tempfile
 from pathlib import Path
 
 from catan_llm.executor.store import RunStore
-from catan_llm.sft.provenance import derive_trajectory_id
+from catan_llm.llm.sft.provenance import derive_trajectory_id
 
 MidgameRunStore = RunStore
 

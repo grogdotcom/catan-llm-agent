@@ -32,7 +32,7 @@ data/executor/
   batches/<run_id>/ckpt<N>_chunk*.batch.jsonl  # generic executor batch files (pipeline-agnostic)
   results/<run_id>_ckpt<N>_*.jsonl             # generic results
 data/luna/                                    # 10-game eval subsets
-src/catan_llm/sft/                # SFT checkpoint pipeline (selection/validation/provenance/cli + side table/export)
+src/catan_llm/llm/sft/            # LLM SFT pipeline (selection/validation/provenance/cli + side table/export)
   selection.py, validation.py, provenance.py, cli.py, side_table.py
 src/catan_llm/executor/           # generic executor (store/runner/spec — pipeline-agnostic)
   store.py, runner.py, spec.py
@@ -46,29 +46,29 @@ The package is organized into deep modules (small interface, hidden implementati
 | Module | Interface | Hides |
 |--------|-----------|-------|
 | `catan_llm/format` | renderers for board/players/history/moves/prompts | Catanatron public-state details, ActionType registry, section ordering |
-| `catan_llm/decision` | `DecisionSurface.present()/.parse()/.plan()` + `MoveExecutor` | move numbering, compound moves (settlement+road, knight+robber), `AUTO_ROAD` resolution, parsing |
-| `catan_llm/prompt` | `PromptBuilder.build(PromptContext) -> PromptArtifact`; `strategy.ensure_strategy_block(...)` | six-section composition, strategy rendering, footer policy, deterministic `[CURRENT STRATEGY]` block handling |
-| `catan_llm/teacher` | `TeacherGateway`, request builders, `parse_teacher_response`/`extract_text_from_batch_body` | chat vs Responses payloads, model registry/spec lookup, base-URL normalisation, openai-SDK transport, response parsing |
-| `catan_llm/strategy` | `resolve_lineage(checkpoint_index, phase2_strategy, prev_accepted_strategy) -> LineageDecision` | bootstrap vs chain strategy feeding, `missing_bootstrap_strategy`/`broken_strategy_lineage` policy |
-| `catan_llm/dataset` | `build_sft_record(...)` | accepted SFT record shape (prompt+`engine_completion`+strategy in/out+split), split summaries |
-| `catan_llm/evaluation` | `evaluation.metrics` + `evaluation.report` | offline accuracy/validity aggregation, acceptance/rejection analytics |
-| `catan_llm/executor` | `RunStore` + `RunExecutor` + `RunSpec` | generic durable executor — record+control plane, batch transport, lineage gating |
-| `catan_llm/sft` | `cli` + `selection`/`validation`/`provenance` + `side_table` | SFT policy (K-bands, lineage, export 80/10/10) JOINing executor |
+| `catan_llm/llm/decision` | `DecisionSurface.present()/.parse()/.plan()` + `MoveExecutor` | LLM-facing move numbering, compound moves, `AUTO_ROAD` resolution, parsing |
+| `catan_llm/llm/prompt` | `PromptBuilder.build(PromptContext) -> PromptArtifact`; strategy block utilities | LLM prompt composition and strategy blocks |
+| `catan_llm/llm/teacher` | `TeacherGateway`, request builders, response parsing | model registry, chat/Responses payloads, transport and parsing |
+| `catan_llm/llm/strategy` | `resolve_lineage(...) -> LineageDecision` | LLM strategy-chain policy |
+| `catan_llm/llm/dataset` | `build_sft_record(...)` | accepted SFT record and split construction |
+| `catan_llm/llm/evaluation` | `evaluation.metrics` + `evaluation.report` | LLM/SFT acceptance, accuracy, and run reporting |
+| `catan_llm/executor` | `RunStore` + `RunExecutor` + `RunSpec` | generic durable executor and transport orchestration |
+| `catan_llm/llm/sft` | `cli` + `selection`/`validation`/`provenance` + `side_table` | LLM SFT policy using the generic executor |
 
 Dependency rules (enforced by review, not by tooling):
-- `format` never imports `openai_batch`/`sft`/SQLite.
-- `decision`/`prompt` depend only on `format` + `domain`.
-- Pipeline modules lean on `teacher`/`prompt.strategy` for strategy injection and batch request/response handling — no regex string patching outside `prompt.strategy`.
-- `openai_batch` is a facade + CLI over `catan_llm.teacher` (kept for existing scripts).
-- `RunStore` (executor) is pipeline-agnostic; `sft` JOINs executor via side table. `RunStore` delegates strategy lineage to `strategy`, prompt strategy blocks to `prompt.strategy`, SFT record shape to `dataset.build_sft_record`.
+- `format` never imports `llm`/SQLite.
+- `llm.decision`/`llm.prompt` depend on shared `format` + `domain`.
+- LLM pipeline modules use `llm.teacher` and `llm.prompt.strategy` for request/response handling and strategy blocks.
+- `llm.openai_batch` is a facade + CLI over `catan_llm.llm.teacher`.
+- `RunStore` is generic execution infrastructure; the LLM SFT side table joins it and owns SFT policy.
 
 The top-level `catan_llm/__init__.py` re-exports the formatting surface for ergonomics; all new code should import from the deep modules directly.
 
 ## Existing Scripts
 
-- `batch_two_phase.py` — placement strategy carryover (uses `prompt.strategy` + `teacher` models).
-- `batch_sft.py` — wrapper for `catan_llm.sft.cli`.
-- `collect_corpus.py` / `collect_1000_placements.py` — AlphaBeta simulation + corpus JSONL (omitted from coverage; rerun via `--help`).
+- `batch_two_phase.py` — LLM placement strategy carryover (uses `catan_llm.llm.prompt` + `teacher`).
+- `batch_sft.py` — wrapper for `catan_llm.llm.sft.cli`.
+- `catan_llm.llm.collect_corpus` / `collect_1000_placements.py` — AlphaBeta simulation + corpus JSONL (omitted from coverage; rerun via `--help`).
 
 * Initial placements: `decision_id 0-3` = R1 first (`placement_round=1`), `4-7` = R2 second reverse. Per player one of each. `collect_1000_placements.py` defaults to `data/initial_placements/raw/...`, annotates `placement_round`/`is_first_placement`, and supports `--sample-players 2 --sample-seed 12345`.
 * Two-phase batch: `batch_two_phase.py` builds `phase1` from sampled R1 (`[CURRENT STRATEGY] None` normalized), sends to `POST /v1/batches` (`endpoint /v1/responses`, `model gpt-5.6-luna`, `reasoning.effort=medium`, `max_output_tokens=4096`, requires `<think><strategy><action>`), parses `<strategy>` per `(game_id,color)` and injects for that player's R2 before `[RECENT TURNS]`, then builds `phase2` batch. Phase files are derived from the corpus stem via `phase_paths_for()` so 1000 vs 2000 stay isolated.

@@ -5,7 +5,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../src"))
 
 from catanatron.models.enums import Action, ActionType
 from catanatron.models.player import Color
-from catan_llm.llm_agent import MoveExecutor
+from catan_llm.llm.agent import MoveExecutor
 from catan_llm.format import Move, AUTO_ROAD, pick_auto_road
 
 def test_executor_empty():
@@ -51,7 +51,7 @@ def test_executor_auto_road_none_when_no_pick():
     assert ex.next([], public_state=None) is None
 
 def test_llm_agent_build_full_prompt_inventory_fallback():
-    from catan_llm.llm_agent import LLMObservationAgent
+    from catan_llm.llm.agent import LLMObservationAgent
     from catanatron.game import Game
     from catanatron.models.player import Player
     import random
@@ -74,7 +74,7 @@ def test_llm_agent_build_full_prompt_inventory_fallback():
     assert "RED (YOU)" in prompt
 
 def test_llm_agent_choose_move_not_implemented():
-    from catan_llm.llm_agent import LLMObservationAgent
+    from catan_llm.llm.agent import LLMObservationAgent
     agent = LLMObservationAgent(Color.RED)
     try:
         agent.choose_move("moves", None)

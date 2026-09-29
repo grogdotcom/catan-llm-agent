@@ -37,7 +37,7 @@ from catanatron.models.perspective_player import (
 )
 from catanatron.features import create_sample
 
-from catan_llm.llm_agent import LLMObservationAgent
+from catan_llm.llm.agent import LLMObservationAgent
 from catan_llm.format import build_moves
 from catan_llm.format.utils import _name_of
 
@@ -192,13 +192,20 @@ def decision_to_record(
     agent = LLMObservationAgent(color)
     if is_initial:
         footer = (
-            "[DECISION REQUIRED]\n"
-            f"The Grandmaster engine has selected Move ID {chosen_index} as the optimal action.\n"
-            "Explain the strategic and tactical reasoning behind this exact choice, then output the action ID. "
+            "[DECISION REQUIRED - FIXED]\n"
+            f"The Grandmaster engine has ALREADY selected Move ID {chosen_index} as the optimal action. This is non-negotiable.\n"
+            f"Rationalize this choice as though you were deciding to pick Move ID {chosen_index} yourself — build your <think> and <strategy> as the proactive reasoning that leads to selecting {chosen_index}, then output <action>{chosen_index}</action> exactly — never substitute your own preferred move. Any other integer = incorrect.\n"
         )
         prompt = agent.build_full_prompt(observation, playable_actions, inventory, footer=footer)
     else:
-        prompt = agent.build_full_prompt(observation, playable_actions, inventory)
+        # Midgame and other phases also carry the fixed engine disclosure when possible;
+        # use the same non-negotiable footer to enforce verbatim action copy.
+        footer = (
+            "[DECISION REQUIRED - FIXED]\n"
+            f"The Grandmaster engine has ALREADY selected Move ID {chosen_index} as the optimal action. This is non-negotiable.\n"
+            f"Rationalize this choice as though you were deciding to pick Move ID {chosen_index} yourself — build your <think> and <strategy> as the proactive reasoning that leads to selecting {chosen_index}, then output <action>{chosen_index}</action> exactly — never substitute your own preferred move. Any other integer = incorrect.\n"
+        )
+        prompt = agent.build_full_prompt(observation, playable_actions, inventory, footer=footer)
 
     chosen_label = chosen_move.label if chosen_move is not None else _serialize_action(selected_action).get("raw", "")
 

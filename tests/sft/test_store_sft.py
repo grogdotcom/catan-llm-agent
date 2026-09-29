@@ -5,8 +5,8 @@ import tempfile
 from pathlib import Path
 
 from catan_llm.executor.store import RunStore as MidgameRunStore
-from catan_llm.sft.provenance import derive_trajectory_id
-from catan_llm.sft.side_table import select_checkpoints as sft_select_checkpoints, export_dataset as sft_export_dataset
+from catan_llm.llm.sft.provenance import derive_trajectory_id
+from catan_llm.llm.sft.side_table import select_checkpoints as sft_select_checkpoints, export_dataset as sft_export_dataset
 
 
 def _make_trajectory(game_id, winner, game_end_turn=72, seed=1000):

@@ -61,7 +61,7 @@ jobs:
 
       - name: Run tests with coverage (full package)
         run: |
-          pytest tests/format \
+          pytest \
             --cov=src/catan_llm \
             --cov-report=term-missing \
             --cov-fail-under=80

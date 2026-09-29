@@ -29,18 +29,18 @@ Records are JSONL with the same schema as ``collect_corpus.decision_to_record``:
 Usage::
 
     # 1) As a module (recommended)
-    venv/bin/python -m catan_llm.collect_placements -n 100 -o initial_placements.jsonl
-    venv/bin/python -m catan_llm.collect_placements 500 placements.jsonl
+    venv/bin/python -m catan_llm.llm.collect_placements -n 100 -o initial_placements.jsonl
+    venv/bin/python -m catan_llm.llm.collect_placements 500 placements.jsonl
 
     # 2) Via the main corpus with flag
-    venv/bin/python -m catan_llm.collect_corpus --placements -n 100 -o initial_placements.jsonl
+    venv/bin/python -m catan_llm.llm.collect_corpus --placements -n 100 -o initial_placements.jsonl
 
     # 3) Programmatically
-    from catan_llm.collect_placements import run_placements_simulation
+    from catan_llm.llm.collect_placements import run_placements_simulation
     run_placements_simulation(num_games=100, output_file="placements.jsonl")
 """
 
-from catan_llm.collect_corpus import (
+from catan_llm.llm.collect_corpus import (
     PlacementsAccumulator,
     CorpusCollectionPlayer,
     decision_to_record,

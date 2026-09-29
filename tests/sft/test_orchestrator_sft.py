@@ -6,9 +6,9 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from catan_llm.executor.store import RunStore as MidgameRunStore
-from catan_llm.sft.side_table import select_checkpoints as sft_select_checkpoints, export_dataset as sft_export_dataset
+from catan_llm.llm.sft.side_table import select_checkpoints as sft_select_checkpoints, export_dataset as sft_export_dataset
 from catan_llm.executor.runner import prepare_epoch, submit_epoch, resume_run
-from catan_llm.sft.provenance import derive_trajectory_id
+from catan_llm.llm.sft.provenance import derive_trajectory_id
 
 
 def _make_trajectory(game_id, winner, seed=1000, end=72):

@@ -1,6 +1,6 @@
 """Validation gates §14."""
 
-from catan_llm.sft.validation import validate_response, count_strategy_blocks
+from catan_llm.llm.sft.validation import validate_response, count_strategy_blocks
 
 
 def _prompt(strat="My plan"):

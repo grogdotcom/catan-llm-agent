@@ -2,7 +2,7 @@
 
 import json
 
-from catan_llm.sft.provenance import (
+from catan_llm.llm.sft.provenance import (
     annotate_record_with_provenance,
     derive_trajectory_id,
     sample_winning_trajectories,

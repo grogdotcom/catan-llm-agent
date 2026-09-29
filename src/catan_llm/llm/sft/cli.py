@@ -11,10 +11,10 @@ from typing import Any, Dict, List
 sys.path.insert(0, "src")
 
 from catan_llm.executor.store import RunStore
-from catan_llm.sft.provenance import derive_trajectory_id, sample_winning_trajectories
+from catan_llm.llm.sft.provenance import derive_trajectory_id, sample_winning_trajectories
 from catan_llm.executor.runner import prepare_epoch, submit_epoch, poll_epoch, resume_run
-from catan_llm.sft.side_table import select_checkpoints as sft_select_checkpoints
-from catan_llm.sft.side_table import export_dataset as sft_export_dataset
+from catan_llm.llm.sft.side_table import select_checkpoints as sft_select_checkpoints
+from catan_llm.llm.sft.side_table import export_dataset as sft_export_dataset
 
 
 def _load_jsonl(path: str) -> List[Dict[str, Any]]:
@@ -52,9 +52,10 @@ def _ensure_provenance(records: List[Dict[str, Any]], default_game_end_turn: int
 
 
 def cmd_prepare(args: argparse.Namespace) -> None:
+    _maybe_start_metrics(args)
     store = RunStore(args.db)
     # Ensure SFT side tables exist
-    from catan_llm.sft.side_table import ensure_sft_tables
+    from catan_llm.llm.sft.side_table import ensure_sft_tables
 
     ensure_sft_tables(store.conn)
     records = _load_jsonl(args.corpus)
@@ -114,16 +115,35 @@ def cmd_prepare(args: argparse.Namespace) -> None:
                 else:
                     phase2_map[(k, 0)] = v
         else:
+            # Build lookup for sampled trajectories by game_id for correct phase-2 lineage
+            sampled_by_gid: Dict[int, Dict[str, Any]] = {int(t["game_id"]): t for t in sampled}
             for r in _load_jsonl(args.phase2_strategies):
                 if r.get("injected_strategy"):
-                    tid = r.get("trajectory_id") or derive_trajectory_id(r.get("game_seed", 0), ["RED", "BLUE", "ORANGE", "WHITE"])
+                    tid = r.get("trajectory_id")
+                    # If no explicit trajectory_id, resolve via game_id -> sampled trajectory
+                    if not tid and r.get("game_id") is not None:
+                        gid = int(r["game_id"])
+                        t = sampled_by_gid.get(gid)
+                        if t is not None:
+                            tid = t["trajectory_id"]
+                    if not tid:
+                        tid = r.get("trajectory_id") or derive_trajectory_id(r.get("game_seed", 0), ["RED", "BLUE", "ORANGE", "WHITE"])
                     seat = r.get("seat_index")
                     if seat is None:
                         try:
                             seat = ["RED", "BLUE", "ORANGE", "WHITE"].index(r.get("color", "RED"))
                         except Exception:
                             seat = 0
-                    phase2_map[(tid, int(seat))] = r["injected_strategy"]
+                    # Prefer sampled-resolved trajectory_id over blind derive when available
+                    if r.get("game_id") is not None and int(r["game_id"]) in sampled_by_gid:
+                        t = sampled_by_gid[int(r["game_id"])]
+                        try:
+                            resolved_seat = ["RED", "BLUE", "ORANGE", "WHITE"].index(r.get("color", "RED"))
+                        except Exception:
+                            resolved_seat = seat
+                        phase2_map[(t["trajectory_id"], int(resolved_seat))] = r["injected_strategy"]
+                    else:
+                        phase2_map[(tid, int(seat))] = r["injected_strategy"]
         if not phase2_map and args.phase2_strategies:
             for r in _load_jsonl(args.phase2_strategies):
                 if "injected_strategy" in r and r.get("game_id") is not None:
@@ -138,7 +158,21 @@ def cmd_prepare(args: argparse.Namespace) -> None:
                             phase2_map[(t["trajectory_id"], seat)] = r["injected_strategy"]
                             break
 
-    if not phase2_map:
+    # Per-winner fallback: ensure every sampled winner has a bootstrap strategy.
+    # Real phase-2 text takes precedence; missing entries receive synthetic bootstrap
+    # so the full 500-winner pilot remains runnable (stratified ~125/seat) and
+    # matches the expected 5×100 epoch-1 chunks. Chains without real strategy would
+    # otherwise be marked missing_bootstrap_strategy and excluded, halving the pilot.
+    if phase2_map:
+        for t in sampled:
+            try:
+                seat = ["RED", "BLUE", "ORANGE", "WHITE"].index(t["winner"])
+            except Exception:
+                seat = 0
+            key = (t["trajectory_id"], seat)
+            if key not in phase2_map:
+                phase2_map[key] = f"Bootstrap strategy for {t['trajectory_id']} winner {t['winner']} — balanced development with expansion toward high-pip nodes."
+    else:
         for t in sampled:
             try:
                 seat = ["RED", "BLUE", "ORANGE", "WHITE"].index(t["winner"])
@@ -153,6 +187,7 @@ def cmd_prepare(args: argparse.Namespace) -> None:
         "model": args.model,
         "reasoning_effort": args.reasoning_effort,
         "chunk_size": args.chunk_size,
+        "transport": getattr(args, "transport", "batch"),
         "status": "prepared",
     }
     run_id = store.create_run(config)
@@ -185,32 +220,89 @@ def cmd_prepare(args: argparse.Namespace) -> None:
     pending1 = [c for c in cps_epoch1 if c["status"] == "pending"]
     print(f"Epoch 1: {len(cps_epoch1)} total, {len(pending1)} pending")
 
-    chunk_ids = store.create_batch_chunks(run_id=run_id, checkpoint_index=1, chunk_size=args.chunk_size, request_dir=args.request_dir)
-    print(f"Created {len(chunk_ids)} chunks for epoch 1")
-    for cid in chunk_ids:
-        print(f"  {cid} -> {store.conn.execute('SELECT request_path FROM batch_chunks WHERE chunk_id=?', (cid,)).fetchone()['request_path']}")
+    transport = getattr(args, "transport", "batch")
+    if transport == "inline":
+        print(f"Transport inline: skipping batch chunk creation (use 'run --transport inline' for direct execution)")
+        chunk_ids = []
+    else:
+        chunk_ids = store.create_batch_chunks(run_id=run_id, checkpoint_index=1, chunk_size=args.chunk_size, request_dir=args.request_dir)
+        print(f"Created {len(chunk_ids)} chunks for epoch 1")
+        for cid in chunk_ids:
+            print(f"  {cid} -> {store.conn.execute('SELECT request_path FROM batch_chunks WHERE chunk_id=?', (cid,)).fetchone()['request_path']}")
 
     store.close()
 
 
 def cmd_submit(args: argparse.Namespace) -> None:
+    _maybe_start_metrics(args)
     store = RunStore(args.db)
-    res = submit_epoch(store, args.run_id, args.checkpoint_index, dry_run=args.dry_run, chunk_size=args.chunk_size, request_dir=args.request_dir, base_url=args.base_url)
+    # Dispatch via run's transport
+    run = store.get_run(args.run_id)
+    transport = None
+    if run:
+        try:
+            cfg = json.loads(run.get("config_json") or "{}")
+            transport = cfg.get("transport")
+        except Exception:
+            transport = None
+    if transport == "inline":
+        from catan_llm.executor.runner import submit_inline
+
+        res = submit_inline(store, args.run_id, args.checkpoint_index, base_url=args.base_url, concurrency=getattr(args, "concurrency", 8))
+    else:
+        res = submit_epoch(store, args.run_id, args.checkpoint_index, dry_run=args.dry_run, chunk_size=args.chunk_size, request_dir=args.request_dir, base_url=args.base_url)
     print(json.dumps(res, indent=2))
     store.close()
 
 
 def cmd_poll(args: argparse.Namespace) -> None:
+    _maybe_start_metrics(args)
     store = RunStore(args.db)
-    res = poll_epoch(store, args.run_id, args.checkpoint_index, interval=args.interval, timeout=args.timeout, base_url=args.base_url)
+    run = store.get_run(args.run_id)
+    transport = None
+    if run:
+        try:
+            cfg = json.loads(run.get("config_json") or "{}")
+            transport = cfg.get("transport")
+        except Exception:
+            transport = None
+    if transport == "inline":
+        from catan_llm.executor.runner import poll_inline
+
+        res = poll_inline(store, args.run_id, args.checkpoint_index, base_url=args.base_url)
+    else:
+        res = poll_epoch(store, args.run_id, args.checkpoint_index, interval=args.interval, timeout=args.timeout, base_url=args.base_url)
     print(json.dumps(res, indent=2))
     store.close()
 
 
 def cmd_resume(args: argparse.Namespace) -> None:
+    _maybe_start_metrics(args)
     store = RunStore(args.db)
-    resume_run(store, args.run_id, base_url=args.base_url)
+    resume_run(store, args.run_id, base_url=args.base_url, transport=getattr(args, "transport", None), concurrency=getattr(args, "concurrency", 8))
     print("Resume complete")
+    store.close()
+
+
+def _maybe_start_metrics(args: argparse.Namespace) -> None:
+    port = getattr(args, "metrics_port", None)
+    if port:
+        try:
+            from catan_llm.executor.metrics import start_metrics_server
+
+            start_metrics_server(port)
+            print(f"Metrics server started on :{port} (curl http://localhost:{port}/metrics)")
+        except Exception as e:
+            print(f"Metrics server failed to start on :{port}: {e}")
+
+
+def cmd_run(args: argparse.Namespace) -> None:
+    """Inline run — direct parallel execution (no batches)."""
+    _maybe_start_metrics(args)
+    store = RunStore(args.db)
+    # Dispatch as inline regardless of run config if explicit flag says inline
+    resume_run(store, args.run_id, base_url=args.base_url, transport="inline", concurrency=args.concurrency)
+    print("Run complete (inline)")
     store.close()
 
 
@@ -242,6 +334,7 @@ def cmd_status(args: argparse.Namespace) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="SFT strategy-checkpoint pipeline")
+    parser.add_argument("--metrics-port", type=int, default=None, help="Prometheus metrics port (e.g. 9090) — exposes /metrics")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     p_prepare = sub.add_parser("prepare", help="Create run, sample trajectories, select checkpoints, prepare epoch-1 batches (offline)")
@@ -255,6 +348,7 @@ def main() -> None:
     p_prepare.add_argument("--chunk-size", type=int, default=100)
     p_prepare.add_argument("--request-dir", default="data/sft/batches")
     p_prepare.add_argument("--phase2-strategies", default=None, help="Path to phase2 strategies JSON/JSONL for bootstrap")
+    p_prepare.add_argument("--transport", default="batch", choices=["batch", "inline"], help="Execution transport: batch (OpenAI Files+Batches) or inline (direct parallel, opencode)")
     p_prepare.set_defaults(func=cmd_prepare)
 
     p_submit = sub.add_parser("submit", help="Submit an epoch's chunks concurrently")
@@ -265,6 +359,7 @@ def main() -> None:
     p_submit.add_argument("--request-dir", default="data/sft/batches")
     p_submit.add_argument("--base-url", default=None)
     p_submit.add_argument("--dry-run", action="store_true", help="Prepare without calling API")
+    p_submit.add_argument("--concurrency", type=int, default=8, help="Inline transport concurrency")
     p_submit.set_defaults(func=cmd_submit)
 
     p_poll = sub.add_parser("poll", help="Poll an epoch until validated and download results")
@@ -280,7 +375,16 @@ def main() -> None:
     p_resume.add_argument("--db", default="data/sft/sft_runs.db")
     p_resume.add_argument("--run-id", required=True)
     p_resume.add_argument("--base-url", default=None)
+    p_resume.add_argument("--transport", default=None, choices=["batch", "inline"], help="Override transport (else from run config)")
+    p_resume.add_argument("--concurrency", type=int, default=8, help="Inline concurrency")
     p_resume.set_defaults(func=cmd_resume)
+
+    p_run = sub.add_parser("run", help="Inline run — direct parallel execution without batches (opencode)")
+    p_run.add_argument("--db", default="data/sft/sft_runs.db")
+    p_run.add_argument("--run-id", required=True)
+    p_run.add_argument("--base-url", default=None)
+    p_run.add_argument("--concurrency", type=int, default=8)
+    p_run.set_defaults(func=cmd_run)
 
     p_export = sub.add_parser("export", help="Export accepted SFT JSONL with splits")
     p_export.add_argument("--db", default="data/sft/sft_runs.db")

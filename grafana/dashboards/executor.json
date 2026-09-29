@@ -1,0 +1,436 @@
+{
+  "id": null,
+  "uid": "catan-executor",
+  "title": "Catan Executor \u2014 SFT Pipeline",
+  "tags": [
+    "catan",
+    "sft",
+    "executor"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 9,
+  "refresh": "5s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "run_id",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(catan_checkpoints, run_id)",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "includeAll": true,
+        "multi": false,
+        "allValue": ".*"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Progress \u2014 checkpoints per epoch / status",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (status) (catan_checkpoints{run_id=~\"$run_id\"})",
+          "legendFormat": "{{status}}"
+        },
+        {
+          "expr": "catan_checkpoints{run_id=~\"$run_id\", epoch=\"1\"}",
+          "legendFormat": "epoch {{epoch}} {{status}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "stacking": {
+              "mode": "normal"
+            }
+          }
+        }
+      },
+      "options": {
+        "legend": {
+          "displayMode": "visible"
+        }
+      }
+    },
+    {
+      "id": 9,
+      "title": "Flat total \u2014 requests processed",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum(catan_requests_total)",
+          "legendFormat": "total"
+        },
+        {
+          "expr": "sum(catan_requests_total{status=\"validated\"})",
+          "legendFormat": "validated"
+        },
+        {
+          "expr": "sum(catan_requests_total{status=\"rejected\"})",
+          "legendFormat": "rejected"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        }
+      }
+    },
+    {
+      "id": 10,
+      "title": "Per epoch \u2014 requests processed",
+      "type": "barchart",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (epoch) (catan_requests_total)",
+          "legendFormat": "epoch {{epoch}}"
+        },
+        {
+          "expr": "sum by (epoch) (catan_checkpoints{status=\"validated\"})",
+          "legendFormat": "validated epoch {{epoch}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Throughput \u2014 req/s by transport",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (transport) (rate(catan_requests_total[1m]))",
+          "legendFormat": "{{transport}}"
+        },
+        {
+          "expr": "sum(rate(catan_requests_total[1m]))",
+          "legendFormat": "total"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Latency \u2014 p50 / p95 (request_duration)",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(catan_request_duration_seconds_bucket[5m])))",
+          "legendFormat": "p50"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(catan_request_duration_seconds_bucket[5m])))",
+          "legendFormat": "p95"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(catan_request_duration_seconds_bucket[5m])))",
+          "legendFormat": "p99"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Quality \u2014 rejections by reason",
+      "type": "piechart",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (reason) (catan_rejections_total)",
+          "legendFormat": "{{reason}}"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Output size \u2014 bytes histogram",
+      "type": "histogram",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (le) (rate(catan_output_bytes_bucket[5m]))",
+          "legendFormat": "bytes"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Lineage \u2014 skipped (broken_strategy_lineage)",
+      "type": "stat",
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 12,
+        "y": 16
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum(catan_lineage_skipped_total)",
+          "legendFormat": "skipped"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          }
+        }
+      }
+    },
+    {
+      "id": 7,
+      "title": "Batch chunks (batch transport only)",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 18,
+        "y": 16
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (status) (catan_batch_chunks{run_id=~\"$run_id\"})",
+          "legendFormat": "{{status}}"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Acceptance rate \u2014 validated / total",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 12,
+        "x": 0,
+        "y": 24
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum(catan_requests_total{status=\"validated\"}) / sum(catan_requests_total)",
+          "legendFormat": "acceptance"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "steps": [
+              {
+                "color": "red",
+                "value": 0
+              },
+              {
+                "color": "yellow",
+                "value": 0.5
+              },
+              {
+                "color": "green",
+                "value": 0.8
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 11,
+      "title": "Recent thinking + strategy \u2014 muse inline (last 20)",
+      "type": "text",
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 28
+      },
+      "datasource": null,
+      "targets": [],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "left",
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Thinking"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 500
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Strategy"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 500
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "code": {
+          "language": "html",
+          "showLineNumbers": false
+        },
+        "content": "<iframe src=\"http://localhost:8000/thinking.html?limit=20&db=muse\" style=\"width:100%; height: 380px; border: 1px solid #ddd; border-radius: 8px;\" loading=\"lazy\"></iframe><div style=\"font-size: 11px; color: #6b7280; margin-top: 4px;\">If iframe is blocked, open <a href=\"http://localhost:8000/thinking.html?limit=20&db=muse\" target=\"_blank\">http://localhost:8000/thinking.html?limit=20&db=muse</a></div>",
+        "mode": "html"
+      }
+    },
+    {
+      "id": 12,
+      "title": "Recent thinking + strategy \u2014 batch (sft_runs.db, last 20)",
+      "type": "text",
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 38
+      },
+      "datasource": null,
+      "targets": [],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "left"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Thinking"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 500
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Strategy"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 500
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "code": {
+          "language": "html",
+          "showLineNumbers": false
+        },
+        "content": "<iframe src=\"http://localhost:8000/thinking.html?limit=20&db=sft\" style=\"width:100%; height: 380px; border: 1px solid #ddd; border-radius: 8px;\" loading=\"lazy\"></iframe><div style=\"font-size: 11px; color: #6b7280; margin-top: 4px;\">If iframe is blocked, open <a href=\"http://localhost:8000/thinking.html?limit=20&db=sft\" target=\"_blank\">http://localhost:8000/thinking.html?limit=20&db=sft</a></div>",
+        "mode": "html"
+      }
+    }
+  ]
+}

@@ -86,7 +86,7 @@ def select_checkpoints(
     Transactionally inserts generic rows into ``checkpoints`` and SFT-specific
     columns into ``sft_checkpoint_details``. Returns number created.
     """
-    from catan_llm.sft.selection import collapse_opportunities, filter_midgame_candidates, select_checkpoints_for_trajectory
+    from catan_llm.llm.sft.selection import collapse_opportunities, filter_midgame_candidates, select_checkpoints_for_trajectory
 
     ensure_sft_tables(store.conn)
     phase2_strategy_map = phase2_strategy_map or {}
@@ -169,7 +169,7 @@ def select_checkpoints(
                         key = f"{ptraj}-{pseat}-{opp.get('turn')}-{opp.get('phase')}-{opp.get('trajectory_index')}"
                         opp_id = _hash_bytes(key.encode())[:16]
 
-                    from catan_llm.strategy import resolve_lineage
+                    from catan_llm.llm.strategy import resolve_lineage
 
                     prev_accepted = None
                     prev_ckpt_id = None
@@ -239,7 +239,7 @@ def select_checkpoints(
 
 
 def _prompt_with_strategy(prompt: str, strategy_in: Optional[str]) -> str:
-    from catan_llm.prompt.strategy import ensure_strategy_block
+    from catan_llm.llm.prompt.strategy import ensure_strategy_block
 
     return ensure_strategy_block(prompt, strategy_in or "None")
 
@@ -281,7 +281,7 @@ def export_dataset(store: Any, run_id: str, output_path: str, split_seed: int = 
     ensure_sft_tables(store.conn)
     assign_splits(store, run_id, split_seed=split_seed)
     cps = store.list_checkpoints(run_id)
-    from catan_llm.dataset import build_sft_record
+    from catan_llm.llm.dataset import build_sft_record
 
     out_p = Path(output_path)
     out_p.parent.mkdir(parents=True, exist_ok=True)

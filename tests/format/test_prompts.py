@@ -744,7 +744,7 @@ def test_format_observation_prompt_no_playable_attr_defaults_empty():
 
 
 def test_agent_build_full_prompt_uses_complete_order():
-    from catan_llm.llm_agent import LLMObservationAgent
+    from catan_llm.llm.agent import LLMObservationAgent
 
     game = create_empty_game(seed=42)
     ps = build_public_state(game)

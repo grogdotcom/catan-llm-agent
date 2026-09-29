@@ -1,0 +1,11 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: "catan-executor"
+    static_configs:
+      - targets: ["host.docker.internal:9090"]
+    scrape_interval: 5s
+    metrics_path: /metrics
+    # If you run executor with --metrics-port 9090 on host, Prometheus (in docker) scrapes via host.docker.internal

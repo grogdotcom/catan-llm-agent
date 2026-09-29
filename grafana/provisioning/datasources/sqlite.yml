@@ -1,0 +1,20 @@
+apiVersion: 1
+datasources:
+  - name: SQLite-muse
+    type: frser-sqlite-datasource
+    uid: sqlite-muse
+    access: proxy
+    url: /data/sft/muse_500.db
+    jsonData:
+      path: /data/sft/muse_500.db
+      queryOnly: true
+    editable: true
+  - name: SQLite-sft
+    type: frser-sqlite-datasource
+    uid: sqlite-sft
+    access: proxy
+    url: /data/sft/sft_runs.db
+    jsonData:
+      path: /data/sft/sft_runs.db
+      queryOnly: true
+    editable: true
